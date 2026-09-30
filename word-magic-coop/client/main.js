@@ -7,7 +7,8 @@ import { LEVEL } from '../shared/level.js';
 import { TUNING } from '../shared/tuning.js';
 import { WORDS } from '../shared/words.js';
 import { resolveSpell } from '../shared/targeting.js';
-import { LocalHost } from './local.js';
+import { HostSession } from './host.js';
+import { hostRoom, joinRoom, CODE_RE } from './p2p.js';
 
 const $ = (id) => document.getElementById(id);
 const NAMES = { A: 'A', B: 'B', rock: '돌', box1: '상자', box2: '상자', cargo: '짐' };
@@ -15,7 +16,8 @@ const BODY_DEF = new Map(LEVEL.bodies.map((d) => [d.id, d]));
 const SENS = 0.0025;
 
 const S = {
-  conn: null, // 호스트 연결: WebSocket 래퍼 또는 LocalHost(혼자 해보기)
+  conn: null, // 호스트 연결: WebSocket 래퍼, P2P 연결, 또는 이 탭의 HostSession
+  room: null, // 방장일 때 P2P 방(방 코드 대기)
   solo: false,
   views: {}, // 혼자 해보기에서 캐릭터별 카메라 방향
   me: null,
@@ -54,9 +56,11 @@ function setLobby(status, note = null) {
   if (note) $('lobby-note').textContent = note;
 }
 
+// 실행 환경: 호스트 서버(기본) · 'web'(정적 호스팅, P2P 방) · 'solo'(서버 없는 링크, 혼자 해보기만)
+const MODE = window.WM_MODE || 'server';
+
 function setJoinDisabled(v) {
-  $('join-btn').disabled = v;
-  $('solo-btn').disabled = v;
+  for (const id of ['join-btn', 'solo-btn', 'create-btn', 'join-code-btn']) $(id).disabled = v;
 }
 
 function connect() {
@@ -89,7 +93,85 @@ function startSolo() {
   if (S.conn) return;
   S.solo = true;
   setJoinDisabled(true);
-  S.conn = new LocalHost(onMessage);
+  S.conn = new HostSession(onMessage, { solo: true });
+}
+
+// 방 만들기(P2P): 이 탭이 호스트가 되고, 친구는 방 코드나 링크로 들어온다.
+function createRoom() {
+  if (S.conn) return;
+  setJoinDisabled(true);
+  setLobby('방을 여는 중…');
+  const session = new HostSession(onMessage);
+  S.conn = session;
+  try {
+    S.room = hostRoom(session, {
+      onReady: ({ code }) => {
+        const link = `${location.origin}${location.pathname}${location.search}#${code}`;
+        $('room-code').textContent = code;
+        $('room-link').textContent = link;
+        $('room-info').hidden = false;
+        // 방을 연 뒤에는 다른 선택지를 숨겨 헷갈리지 않게 한다.
+        document.querySelector('.lobby-actions').hidden = true;
+        $('join-form').hidden = true;
+        if (S.phase !== 'playing') setLobby('방을 만들었어요. 친구가 들어오면 바로 시작해요.');
+      },
+      onError: (msg) => {
+        leaveRoom();
+        setLobby('방을 만들지 못했어요.', msg);
+      },
+    });
+  } catch (e) {
+    leaveRoom();
+    setLobby('방을 만들지 못했어요.', e.message);
+  }
+}
+
+function joinByCode(raw) {
+  const code = String(raw || '').trim().toLowerCase();
+  if (!CODE_RE.test(code)) {
+    setLobby('방 코드를 확인하세요.', '방 코드는 영문 소문자와 숫자 6자리예요.');
+    return;
+  }
+  if (S.conn) return;
+  setJoinDisabled(true);
+  S.phase = 'connecting';
+  setLobby(`방 ${code}에 들어가는 중…`);
+  try {
+    S.conn = joinRoom(code, onMessage, {
+      onFail: (msg) => {
+        S.conn = null;
+        S.phase = 'lobby';
+        setJoinDisabled(false);
+        setLobby('방에 들어가지 못했어요.', msg);
+      },
+      onClose: () => {
+        const was = S.phase;
+        S.conn = null;
+        S.me = null;
+        S.phase = 'lobby';
+        setJoinDisabled(false);
+        updateSeats({ A: false, B: false });
+        if (was === 'full') return;
+        setLobby('방장과 연결이 끊겼어요.', '방장이 방을 닫았거나 네트워크가 끊겼어요. 같은 링크로 다시 들어올 수 있어요.');
+      },
+    });
+  } catch (e) {
+    S.conn = null;
+    setJoinDisabled(false);
+    setLobby('방에 들어가지 못했어요.', e.message);
+  }
+}
+
+function leaveRoom() {
+  S.room?.close();
+  S.room = null;
+  S.conn?.close();
+  S.conn = null;
+  S.phase = 'lobby';
+  $('room-info').hidden = true;
+  document.querySelector('.lobby-actions').hidden = false;
+  if (MODE === 'web') $('join-form').hidden = false;
+  setJoinDisabled(false);
 }
 
 function send(msg) {
@@ -133,6 +215,10 @@ function onMessage(m) {
       S.me = m.you;
       S.phase = 'waiting';
       if (m.solo) break;
+      if (m.p2p) {
+        if (m.you === 'B') setLobby('방에 들어왔어요. 곧 시작해요…');
+        break;
+      }
       setLobby(`플레이어 ${m.you}(으)로 참가했어요. 상대를 기다리는 중…`);
       const port = m.port;
       const lines = [];
@@ -476,14 +562,42 @@ $('restart-btn').onclick = () => {
 };
 $('join-btn').onclick = () => connect();
 $('solo-btn').onclick = () => startSolo();
-if (window.WM_SOLO_ONLY) {
-  // 서버 없이 열린 페이지(예: 공유 링크): 2인 접속 버튼 대신 혼자 해보기만 보여 준다.
+$('create-btn').onclick = () => createRoom();
+$('join-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  joinByCode($('join-code').value);
+});
+$('copy-link').onclick = () => {
+  const text = $('room-link').textContent;
+  const done = () => { $('copy-link').textContent = '복사했어요'; setTimeout(() => { $('copy-link').textContent = '링크 복사'; }, 1500); };
+  const fallback = () => {
+    const r = document.createRange();
+    r.selectNodeContents($('room-link'));
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+    $('copy-link').textContent = '선택됨 — Ctrl+C로 복사';
+  };
+  try { navigator.clipboard.writeText(text).then(done, fallback); } catch { fallback(); }
+};
+
+// 실행 환경에 맞는 로비 버튼만 보여 준다.
+if (MODE === 'solo') {
+  // 서버 없이 열린 페이지(claude.ai 링크): 혼자 해보기만.
   $('join-btn').hidden = true;
   document.querySelector('.seats').hidden = true;
   $('solo-btn').classList.remove('secondary');
   $('solo-btn').textContent = '시작하기';
   $('lobby-status').textContent = '서버 없이 이 페이지에서 바로 해 볼 수 있어요. 혼자서 A와 B를 번갈아 조작해요.';
   $('solo-note').hidden = false;
+} else if (MODE === 'web') {
+  // 정적 호스팅(예: Vercel): 방 만들기 / 코드·링크로 참가 / 혼자 해보기.
+  $('join-btn').hidden = true;
+  $('create-btn').hidden = false;
+  $('join-form').hidden = false;
+  $('lobby-status').textContent = '방을 만들고 링크를 친구에게 보내면 둘이 함께 플레이해요.';
+} else {
+  $('create-btn').hidden = true;
 }
 // 편집창 버튼에 포커스가 남으면 Space 등으로 다시 눌릴 수 있으므로 클릭 후 포커스를 푼다.
 $('editor').addEventListener('click', () => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
@@ -646,6 +760,12 @@ async function boot() {
   const q = new URLSearchParams(location.search);
   if (q.has('autojoin')) connect();
   if (q.has('solo')) startSolo();
+  // 친구가 받은 링크(#방코드)로 열면 바로 그 방에 들어간다.
+  const hashCode = location.hash.slice(1).toLowerCase();
+  if (MODE === 'web' && CODE_RE.test(hashCode)) {
+    $('join-code').value = hashCode;
+    joinByCode(hashCode);
+  }
 }
 boot();
 
@@ -686,4 +806,7 @@ window.__wm = {
   toggleEditor,
   switchCharacter,
   get solo() { return S.solo; },
+  createRoom,
+  joinByCode,
+  get roomCode() { return $('room-code').textContent; },
 };

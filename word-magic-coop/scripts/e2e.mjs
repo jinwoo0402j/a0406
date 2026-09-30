@@ -64,7 +64,7 @@ try {
 
   // 1) A가 B를 조준 → 미리보기에 B가 강조 → 시전
   await A.evaluate(() => window.__wm.aimAt('B'));
-  await sleep(250);
+  await A.waitForFunction(() => window.__wm.preview?.ok?.has('B'), null, { timeout: 3000 }).catch(() => {});
   const pv = await A.evaluate(() => [...(window.__wm.preview?.ok || [])]);
   check('A의 조준 미리보기에 B가 적용 대상으로 표시', pv.includes('B'), pv.join(','));
   await A.screenshot({ path: `${OUT}/02-A-aim-B.png` });

@@ -20,7 +20,7 @@ const out = `<title>단어로 만드는 마법</title>
 ${css}
 </style>
 <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@${pkg.dependencies.three}/build/three.module.js" } }</script>
-<script>window.WM_SOLO_ONLY = true;</script>
+<script>window.WM_MODE = 'solo';</script>
 ${body.trim()}
 <script type="module" src="client/main.js"></script>
 `;

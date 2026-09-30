@@ -25,7 +25,18 @@
       <p id="lobby-note" class="note" hidden></p>
       <div class="lobby-actions">
         <button id="join-btn" type="button">2인 참가하기</button>
+        <button id="create-btn" type="button" hidden>방 만들기</button>
         <button id="solo-btn" type="button" class="secondary">혼자 해보기</button>
+      </div>
+      <form id="join-form" class="join-form" hidden>
+        <label for="join-code">친구 방에 들어가기</label>
+        <input id="join-code" name="join-code" type="text" inputmode="latin" autocomplete="off" spellcheck="false" maxlength="6" placeholder="방 코드 6자리">
+        <button id="join-code-btn" type="submit" class="secondary">참가</button>
+      </form>
+      <div id="room-info" class="room-info" hidden>
+        <div class="room-code">방 코드 <strong id="room-code"></strong></div>
+        <div class="room-link"><code id="room-link"></code><button id="copy-link" type="button" class="ghost">링크 복사</button></div>
+        <p class="note">친구가 이 링크를 열면 바로 들어와요. 게임하는 동안 이 탭을 닫거나 다른 탭으로 오래 옮기지 마세요.</p>
       </div>
       <p id="solo-note" class="note" hidden>PC의 키보드와 마우스로 플레이해요. 두 사람이 각자 조작하는 네트워크 플레이는 호스트 프로그램(<code>npm start</code>)으로 할 수 있어요.</p>
       <div id="lobby-address" class="address" hidden></div>
