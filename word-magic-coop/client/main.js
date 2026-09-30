@@ -3,7 +3,7 @@
 import { Renderer } from './render.js';
 import { cameraRig, CAM } from './camera.js';
 import { FONT_STACK } from './labels.js';
-import { LEVEL } from '../shared/level.js';
+import { LEVEL, SEAT_IDS, bodyDefs } from '../shared/level.js';
 import { TUNING } from '../shared/tuning.js';
 import { WORDS } from '../shared/words.js';
 import { resolveSpell } from '../shared/targeting.js';
@@ -11,8 +11,9 @@ import { HostSession } from './host.js';
 import { hostRoom, joinRoom, CODE_RE } from './p2p.js';
 
 const $ = (id) => document.getElementById(id);
-const NAMES = { A: 'A', B: 'B', rock: '돌', box1: '상자', box2: '상자', cargo: '짐' };
-const BODY_DEF = new Map(LEVEL.bodies.map((d) => [d.id, d]));
+const NAMES = { ...Object.fromEntries(SEAT_IDS.map((id) => [id, id])), rock: '돌', box1: '상자', box2: '상자', cargo: '짐' };
+const BODY_DEF = new Map(bodyDefs().map((d) => [d.id, d]));
+const SEAT_COLOR = Object.fromEntries(LEVEL.seats.map((s) => [s.id, s.color]));
 const SENS = 0.0025;
 
 const S = {
@@ -179,7 +180,7 @@ function send(msg) {
 }
 
 function updateWho() {
-  $('who-chip').style.background = S.me === 'A' ? 'var(--a)' : 'var(--b)';
+  $('who-chip').style.background = SEAT_COLOR[S.me];
   const other = S.me === 'A' ? 'B' : 'A';
   $('who-name').textContent = S.solo ? `플레이어 ${S.me} 조작 중 · Q로 ${other} 전환` : `플레이어 ${S.me} (나)`;
   $('keys').textContent = `WASD 이동 · Space 점프 · 좌클릭 시전 · E 줍기 · R 해제 · Tab 편집${S.solo ? ' · Q 캐릭터 전환' : ''}`;
@@ -201,9 +202,23 @@ function switchCharacter() {
   log(`이제 플레이어 ${next}를 조작해요`);
 }
 
+// 로비의 자리 표시(A~F)
+function buildSeats() {
+  const box = document.querySelector('.seats');
+  box.innerHTML = '';
+  for (const id of SEAT_IDS) {
+    const el = document.createElement('div');
+    el.className = 'seat';
+    el.dataset.seat = id;
+    el.innerHTML = `<span class="dot"></span>${id}`;
+    el.querySelector('.dot').style.setProperty('--seat', SEAT_COLOR[id]);
+    box.append(el);
+  }
+}
+
 function updateSeats(seats) {
-  for (const id of ['A', 'B']) {
-    const el = document.querySelector(`.seat-${id}`);
+  for (const el of document.querySelectorAll('.seat')) {
+    const id = el.dataset.seat;
     el.classList.toggle('on', !!seats[id]);
     el.classList.toggle('me', S.me === id);
   }
@@ -216,7 +231,7 @@ function onMessage(m) {
       S.phase = 'waiting';
       if (m.solo) break;
       if (m.p2p) {
-        if (m.you === 'B') setLobby('방에 들어왔어요. 곧 시작해요…');
+        if (m.you !== 'A') setLobby(`플레이어 ${m.you}(으)로 방에 들어왔어요. 곧 시작해요…`);
         break;
       }
       setLobby(`플레이어 ${m.you}(으)로 참가했어요. 상대를 기다리는 중…`);
@@ -230,12 +245,13 @@ function onMessage(m) {
     }
     case 'full':
       S.phase = 'full';
-      setLobby('이미 두 명이 플레이 중이에요.', '이 프로토타입은 정확히 2명만 참가할 수 있어요.');
+      setLobby('자리가 가득 찼어요.', '한 방에는 최대 6명까지 들어올 수 있어요.');
       break;
     case 'lobby':
       updateSeats(m.seats);
       break;
     case 'start':
+      if (m.you) S.me = m.you;
       startPlaying();
       break;
     case 'peerLeft':
@@ -267,7 +283,7 @@ function startPlaying() {
   updateWho();
   log(S.solo
     ? '혼자 해보기: Q로 A와 B를 번갈아 조작해요. 같은 주문을 친구·돌·상자에 써 보세요.'
-    : '두 사람이 모였어요! 같은 주문을 친구·돌·상자에 써 보세요.');
+    : '게임이 시작됐어요! 같은 주문을 친구·돌·상자에 써 보세요.');
 }
 
 // ------------------------------------------------------------------ 스냅숏 보간
@@ -387,7 +403,13 @@ function onEvent(e) {
       log(`${wlabel(e.word)} 단어가 안전한 곳으로 돌아왔어요`);
       break;
     case 'clear':
-      log('도착 성공! 짐과 두 사람이 함께 도착했어요');
+      log('도착 성공! 짐과 모두가 함께 도착했어요');
+      break;
+    case 'join':
+      if (e.id !== S.me) log(`플레이어 ${e.id}가 들어왔어요`);
+      break;
+    case 'leave':
+      log(`플레이어 ${e.id}가 나갔어요${e.dropped?.length ? ' (가진 단어는 그 자리에 떨어졌어요)' : ''}`);
       break;
     case 'restart':
       S.snaps = [];
@@ -550,16 +572,17 @@ $('restart-btn').onclick = () => {
     btn.textContent = '한 번 더 누르면 처음부터 다시 시작해요';
     restartArmed = setTimeout(() => {
       restartArmed = null;
-      btn.textContent = '처음부터 다시 (두 사람 모두)';
+      btn.textContent = '처음부터 다시 (모두)';
     }, 3000);
     return;
   }
   clearTimeout(restartArmed);
   restartArmed = null;
-  btn.textContent = '처음부터 다시 (두 사람 모두)';
+  btn.textContent = '처음부터 다시 (모두)';
   send({ t: 'restart' });
   toggleEditor(false);
 };
+buildSeats();
 $('join-btn').onclick = () => connect();
 $('solo-btn').onclick = () => startSolo();
 $('create-btn').onclick = () => createRoom();
@@ -595,7 +618,7 @@ if (MODE === 'solo') {
   $('join-btn').hidden = true;
   $('create-btn').hidden = false;
   $('join-form').hidden = false;
-  $('lobby-status').textContent = '방을 만들고 링크를 친구에게 보내면 둘이 함께 플레이해요.';
+  $('lobby-status').textContent = '방을 만들고 링크를 친구들에게 보내면 함께 플레이해요(최대 6명).';
 } else {
   $('create-btn').hidden = true;
 }
@@ -669,9 +692,10 @@ function updateHud(frame) {
   const badges = [];
   if (me?.f > 0) badges.push(`<span class="badge float">떠 있음 ${me.f.toFixed(1)}초</span>`);
   if (me?.i > 0) badges.push(`<span class="badge shield">보호 중 ${me.i.toFixed(1)}초</span>`);
-  const other = S.me === 'A' ? 'B' : 'A';
-  const ob = frame.bodies.get(other);
-  if (ob?.i > 0) badges.push(`<span class="badge shield">${other} 보호 중</span>`);
+  for (const id of SEAT_IDS) {
+    const ob = id !== S.me && frame.bodies.get(id);
+    if (ob?.i > 0) badges.push(`<span class="badge shield">${id} 보호 중</span>`);
+  }
   $('badges').innerHTML = badges.join('');
 
   // 줍기 안내
@@ -686,7 +710,14 @@ function updateHud(frame) {
 
   // 도착 구역
   const g = S.latest.g;
-  for (const el of document.querySelectorAll('.goal-items span')) el.classList.toggle('in', !!g.in[el.dataset.k]);
+  const keys = Object.keys(g.in);
+  const items = $('goal-items');
+  if (items.dataset.keys !== keys.join()) {
+    // 접속한 사람이 바뀌면 목록을 다시 만든다(짐 + 접속한 모든 사람)
+    items.dataset.keys = keys.join();
+    items.innerHTML = keys.map((k) => `<span data-k="${k}">${k === 'cargo' ? '짐' : k}</span>`).join('');
+  }
+  for (const el of items.children) el.classList.toggle('in', !!g.in[el.dataset.k]);
   $('goal-fill').style.width = `${Math.min(1, g.t / TUNING.goalHoldTime) * 100}%`;
   $('clear-banner').hidden = !g.c;
   $('lock-hint').hidden = S.locked || S.editorOpen;

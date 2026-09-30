@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>단어로 만드는 마법</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/client/style.css">
   <script type="importmap">{ "imports": { "three": "/vendor/three/three.module.js" } }</script>
 </head>
@@ -16,12 +16,9 @@
   <section id="lobby" class="screen">
     <div class="card">
       <h1>단어로 만드는 마법</h1>
-      <p class="sub">2인 협동 프로토타입 · 대상 지정 규칙 × 작용</p>
-      <div class="seats">
-        <div class="seat seat-A"><span class="dot"></span>플레이어 A</div>
-        <div class="seat seat-B"><span class="dot"></span>플레이어 B</div>
-      </div>
-      <p id="lobby-status" class="status">호스트에 접속해 두 사람이 모이면 시작해요.</p>
+      <p class="sub">2~6인 협동 프로토타입 · 대상 지정 규칙 × 작용</p>
+      <div class="seats" aria-label="참가 자리 (최대 6명)"></div>
+      <p id="lobby-status" class="status">호스트에 접속해 2명 이상 모이면 시작해요(최대 6명).</p>
       <p id="lobby-note" class="note" hidden></p>
       <div class="lobby-actions">
         <button id="join-btn" type="button">2인 참가하기</button>
@@ -36,9 +33,9 @@
       <div id="room-info" class="room-info" hidden>
         <div class="room-code">방 코드 <strong id="room-code"></strong></div>
         <div class="room-link"><code id="room-link"></code><button id="copy-link" type="button" class="ghost">링크 복사</button></div>
-        <p class="note">친구가 이 링크를 열면 바로 들어와요. 게임하는 동안 이 탭을 닫거나 다른 탭으로 오래 옮기지 마세요.</p>
+        <p class="note">친구들이 이 링크를 열면 바로 들어와요(최대 6명). 게임하는 동안 이 탭을 닫거나 다른 탭으로 오래 옮기지 마세요.</p>
       </div>
-      <p id="solo-note" class="note" hidden>PC의 키보드와 마우스로 플레이해요. 두 사람이 각자 조작하는 네트워크 플레이는 호스트 프로그램(<code>npm start</code>)으로 할 수 있어요.</p>
+      <p id="solo-note" class="note" hidden>PC의 키보드와 마우스로 플레이해요. 여럿이 각자 조작하는 네트워크 플레이는 호스트 프로그램(<code>npm start</code>)으로 할 수 있어요.</p>
       <div id="lobby-address" class="address" hidden></div>
       <details class="howto">
         <summary>조작법</summary>
@@ -70,9 +67,7 @@
 
     <div id="goal" class="panel">
       <div class="goal-title">도착 구역</div>
-      <div class="goal-items">
-        <span data-k="cargo">짐</span><span data-k="A">A</span><span data-k="B">B</span>
-      </div>
+      <div id="goal-items" class="goal-items"></div>
       <div class="goal-bar"><div id="goal-fill"></div></div>
     </div>
 
@@ -88,7 +83,7 @@
 
     <div id="clear-banner" hidden>
       <div class="big">도착 성공!</div>
-      <div class="small">짐과 두 사람이 함께 도착했어요 · Tab → 처음부터 다시</div>
+      <div class="small">짐과 모두가 함께 도착했어요 · Tab → 처음부터 다시</div>
     </div>
   </section>
 
@@ -114,7 +109,7 @@
       <div id="inventory"></div>
       <p class="note">단어는 한 사람만 가질 수 있어요. 내려놓으면 상대가 E로 주울 수 있고, 장착 중이던 슬롯은 비어요.</p>
       <div class="editor-actions">
-        <button type="button" id="restart-btn" class="danger">처음부터 다시 (두 사람 모두)</button>
+        <button type="button" id="restart-btn" class="danger">처음부터 다시 (모두)</button>
         <button type="button" id="close-editor">닫기 (Tab)</button>
       </div>
     </div>

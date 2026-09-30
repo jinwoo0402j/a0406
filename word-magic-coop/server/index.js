@@ -7,7 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { Game, PLAYER_IDS } from './game.js';
+import { Game } from './game.js';
+import { SEAT_IDS } from '../shared/level.js';
 import { TUNING } from '../shared/tuning.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -58,7 +59,8 @@ export function lanAddresses() {
 
 export function startServer({ port = 8080, host = '0.0.0.0', log = console.log } = {}) {
   const game = new Game();
-  const seats = Object.fromEntries(PLAYER_IDS.map((id) => [id, null]));
+  const seats = Object.fromEntries(SEAT_IDS.map((id) => [id, null]));
+  const connected = () => SEAT_IDS.filter((id) => seats[id]);
   let state = 'lobby';
 
   const server = http.createServer(serveStatic);
@@ -69,11 +71,12 @@ export function startServer({ port = 8080, host = '0.0.0.0', log = console.log }
   const lobbyInfo = () => ({
     t: 'lobby',
     state,
-    seats: Object.fromEntries(PLAYER_IDS.map((id) => [id, !!seats[id]])),
+    seats: Object.fromEntries(SEAT_IDS.map((id) => [id, !!seats[id]])),
   });
 
+  // 최대 6명. 2명이 모이면 시작하고, 이후 들어온 사람은 진행 중인 판에 참가한다.
   wss.on('connection', (ws) => {
-    const seat = PLAYER_IDS.find((id) => !seats[id]);
+    const seat = SEAT_IDS.find((id) => !seats[id]);
     if (!seat) {
       send(ws, { t: 'full' });
       ws.close(4000, 'full');
@@ -86,12 +89,17 @@ export function startServer({ port = 8080, host = '0.0.0.0', log = console.log }
     send(ws, { t: 'welcome', you: seat, addresses: lanAddresses(), port: server.address().port });
     broadcast(lobbyInfo());
 
-    if (PLAYER_IDS.every((id) => seats[id])) {
-      game.reset();
+    if (state === 'playing') {
+      game.addPlayer(seat);
+      send(ws, { t: 'start', round: game.round });
+      broadcast(lobbyInfo());
+      log(`[host] 플레이어 ${seat} 진행 중인 게임에 참가`);
+    } else if (connected().length >= 2) {
+      game.reset(connected());
       state = 'playing';
       broadcast({ t: 'start', round: game.round });
       broadcast(lobbyInfo());
-      log('[host] 2명 접속 — 게임 시작');
+      log(`[host] ${connected().length}명 접속 — 게임 시작`);
     }
 
     ws.on('message', (data) => {
@@ -107,10 +115,13 @@ export function startServer({ port = 8080, host = '0.0.0.0', log = console.log }
       seats[seat] = null;
       log(`[host] 플레이어 ${seat} 연결 끊김`);
       if (state === 'playing') {
-        // 호스트 이전은 하지 않는다. 남은 사람은 안내 후 로비로 돌아간다.
-        state = 'lobby';
-        game.reset();
-        broadcast({ t: 'peerLeft', who: seat });
+        game.removePlayer(seat); // 가진 단어는 그 자리에 떨어진다
+        if (connected().length < 2) {
+          // 혼자 남으면 안내 후 로비로 돌아가 새 참가자를 기다린다. 호스트 이전은 하지 않는다.
+          state = 'lobby';
+          game.reset([]);
+          broadcast({ t: 'peerLeft', who: seat });
+        }
       }
       broadcast(lobbyInfo());
     });

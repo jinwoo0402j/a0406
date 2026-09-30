@@ -1,10 +1,9 @@
 // three.js 장면. 서버 상태를 그대로 그리며, 판정은 하지 않는다(미리보기 강조 표시만).
 import * as THREE from 'three';
-import { LEVEL } from '../shared/level.js';
+import { LEVEL, bodyDefs } from '../shared/level.js';
 import { WORDS } from '../shared/words.js';
 import { makeLabel } from './labels.js';
 
-const PLAYER_COLOR = { A: '#ff7f73', B: '#5fa8ff' };
 const ACTION_COLOR = { PUSH: '#ff9a4d', LIFT: '#4fd6ff' };
 const SLOT_COLOR = { target: '#9b7bff', action: '#ff9a4d' };
 
@@ -139,8 +138,9 @@ export class Renderer {
   }
 
   buildBodies() {
-    for (const d of LEVEL.bodies) {
+    for (const d of bodyDefs()) {
       const group = new THREE.Group();
+      group.visible = false; // 스냅숏에 있는 것만 보인다(접속한 자리만 캐릭터가 있다)
       const mats = [];
       const std = (color, extra = {}) => {
         const m = new THREE.MeshStandardMaterial({ color, roughness: 0.6, ...extra });
@@ -153,7 +153,7 @@ export class Renderer {
       let visual;
       if (d.kind === 'player') {
         visual = new THREE.Group();
-        const col = PLAYER_COLOR[d.id];
+        const col = d.color;
         const body = new THREE.Mesh(new THREE.SphereGeometry(0.4, 24, 16), std(col));
         body.scale.set(1, 0.95, 1);
         body.position.y = -h / 2 + 0.4;
@@ -366,6 +366,7 @@ export class Renderer {
   render(frame, dt, t) {
     for (const [id, v] of this.bodyViews) {
       const s = frame.bodies.get(id);
+      v.group.visible = !!s;
       if (!s) continue;
       v.group.position.set(s.p[0], s.p[1], s.p[2]);
       v.visual.rotation.y = s.y || 0;

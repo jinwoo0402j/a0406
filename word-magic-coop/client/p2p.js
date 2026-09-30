@@ -7,6 +7,7 @@ const ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789'; // 헷갈리는 글자(i, l,
 const JOIN_TIMEOUT_MS = 25000; // 중계(TURN)를 거치는 느린 연결까지 기다린다
 const SILENCE_TIMEOUT_MS = 8000; // 호스트에서 이만큼 아무 메시지도 없으면 끊긴 것으로 본다
 const PING_MS = 2000;
+const HELLO_MS = 1000; // 자리 안내를 받을 때까지 hello를 다시 보내는 간격
 
 export const CODE_RE = /^[a-z2-9]{6}$/;
 
@@ -55,13 +56,21 @@ export function hostRoom(session, { onReady, onError }) {
     peer.on('open', () => onReady({ code }));
     peer.on('connection', (conn) => {
       let link = null;
-      conn.on('open', () => {
-        link = session.attachRemote({
-          send: (obj) => { if (conn.open) conn.send(obj); },
-          close: () => conn.close(),
-        });
+      // 연결이 막 열린 순간 보낸 메시지는 유실될 수 있어, 참가자가 보낸 hello를 받은 뒤에 자리를 배정한다.
+      // hello가 다시 오면(안내를 못 받은 경우) 안내만 다시 보낸다.
+      conn.on('data', (d) => {
+        if (d && d.t === 'hello') {
+          if (link) { link.hello(); return; }
+          console.info(`[p2p] 참가 연결: ${conn.peer}`);
+          link = session.attachRemote({
+            key: conn.peer, // 같은 사람이 다시 연결하면 같은 자리를 이어 준다
+            send: (obj) => { if (conn.open) conn.send(obj); },
+            close: () => conn.close(),
+          });
+          return;
+        }
+        link?.receive(d);
       });
-      conn.on('data', (d) => link?.receive(d));
       conn.on('close', () => link?.closed());
       conn.on('error', () => link?.closed());
     });
@@ -89,6 +98,7 @@ export function joinRoom(code, onMessage, { onFail, onClose }) {
   const peer = new Peer(peerOptions());
   let conn = null;
   let opened = false;
+  let welcomed = false;
   let done = false;
   let lastMsg = performance.now();
   const timers = [];
@@ -101,15 +111,26 @@ export function joinRoom(code, onMessage, { onFail, onClose }) {
   };
   timers.push(setTimeout(() => { if (!opened) finish(onFail, '방에 연결하지 못했어요(시간 초과). 코드와 인터넷 연결을 확인하세요.'); }, JOIN_TIMEOUT_MS));
   peer.on('open', () => {
+    // 신호 서버와 다시 연결되면 'open'이 또 올 수 있다. 방장에게는 한 번만 연결한다.
+    if (conn) return;
     conn = peer.connect(PREFIX + code, { reliable: true, serialization: 'json' });
     conn.on('open', () => {
+      console.info('[p2p] 방장과 연결됨');
       opened = true;
       lastMsg = performance.now();
+      conn.send({ t: 'hello' });
+      const hello = setInterval(() => {
+        if (welcomed || done) { clearInterval(hello); return; }
+        if (conn.open) conn.send({ t: 'hello' });
+      }, HELLO_MS);
+      timers.push(hello);
       timers.push(setInterval(() => { if (conn.open) conn.send({ t: 'ping' }); }, PING_MS));
       timers.push(setInterval(() => { if (performance.now() - lastMsg > SILENCE_TIMEOUT_MS) finish(onClose); }, 1000));
     });
     conn.on('data', (d) => {
       lastMsg = performance.now();
+      if (d && d.t !== 's' && d.t !== 'ev') console.info(`[p2p] 받음: ${d.t}${d.you ? ` ${d.you}` : ''}`);
+      if (d && (d.t === 'welcome' || d.t === 'full')) welcomed = true;
       onMessage(d);
     });
     conn.on('close', () => finish(opened ? onClose : onFail, '방장이 연결을 받지 않았어요.'));
