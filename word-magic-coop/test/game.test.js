@@ -63,7 +63,7 @@ test('T2: 파이어볼은 날아가서 실제로 맞은 대상에 적용한다(�
   assert.ok(g.body('dummy').hp < 100);
 });
 
-test('T3: 밀치기는 즉시·한 번, 들기는 누르는 동안 유지되며 시점을 계속 따라온다', () => {
+test('T3: 밀치기는 즉시·한 번, 들기는 시전 종료까지 유지되며 시점을 계속 따라온다', () => {
   const g = newGame();
   place(g, 'A', [0, 0, 5]); place(g, 'B', [0, 0, 7]); place(g, 'rock', [2, 0, 9]);
   run(g, 0.3);
@@ -84,9 +84,36 @@ test('T3: 밀치기는 즉시·한 번, 들기는 누르는 동안 유지되며 
   }
   assert.equal(g.body('rock').heldBy, 'B', '2초 넘게 지나도 유지');
   assert.equal(cast(g, 'B', 'rock').ok, false, '유지 중에는 새로 시전하지 않는다');
-  g.handle('B', { t: 'liftEnd' });
+  g.handle('B', { t: 'endCast' });
   assert.equal(g.body('rock').heldBy, null);
   assert.ok(g.players.B.cooldownUntil > g.time);
+  run(g, 1.5);
+  assert.ok(g.body('rock').grounded, '놓으면 떨어진다');
+});
+
+test('시전 종료: 자신이 유지하는 마법은 시전자만 끝내고, R(친구 마법에서 벗어나기)과는 별개다', () => {
+  const g = newGame();
+  place(g, 'A', [0, 0, 5]); place(g, 'B', [0, 0, 7]); place(g, 'rock', [2, 0, 9]);
+  run(g, 0.3);
+  assert.equal(g.handle('B', { t: 'endCast' }).ok, false, '유지 중인 마법이 없으면 아무 일도 없다');
+  assert.ok(cast(g, 'B', 'rock').ok);
+  g.drainEvents();
+  // 유지 중 재시전은 거절되고, 이유는 시전 종료를 안내한다
+  const again = cast(g, 'B', 'rock');
+  assert.equal(again.reason, REASON.SUSTAINING);
+  assert.ok(g.drainEvents().some((e) => e.k === 'castFail' && e.to === 'B' && e.reason === REASON.SUSTAINING));
+  // 시전자 본인의 R은 해제(남이 건 마법에서 벗어나기)일 뿐, 자기 들기를 끝내지 않는다
+  g.handle('B', { t: 'release' });
+  run(g, 0.3);
+  assert.equal(g.body('rock').heldBy, 'B');
+  // 다른 사람이 시전 종료를 눌러도 B의 들기는 계속된다
+  assert.equal(g.handle('A', { t: 'endCast' }).ok, false);
+  assert.equal(g.body('rock').heldBy, 'B');
+  // 시전자가 시전 종료 → 놓는다
+  assert.ok(g.handle('B', { t: 'endCast' }).ok);
+  const ev = g.drainEvents();
+  assert.ok(ev.some((e) => e.k === 'liftEnd' && e.by === 'B' && e.target === 'rock' && e.reason === 'released'));
+  assert.equal(g.body('rock').heldBy, null);
   run(g, 1.5);
   assert.ok(g.body('rock').grounded, '놓으면 떨어진다');
 });
@@ -101,7 +128,7 @@ test('T4: 들기 — 무게별 높이, 힘 부족, 시점 회전을 늦게 따�
     lookAt(g, 'B', [0, 8, at]);
     run(g, 2);
     const h = bottom(g.body(id));
-    g.handle('B', { t: 'liftEnd' });
+    g.handle('B', { t: 'endCast' });
     run(g, 1.5);
     return h;
   };
@@ -115,7 +142,7 @@ test('T4: 들기 — 무게별 높이, 힘 부족, 시점 회전을 늦게 따�
   grab(g, 'B', 'w5');
   place(g, 'B', [2.4, 0, 16]); run(g, 0.3);
   assert.ok(cast(g, 'B', 'box2').ok, '<세게> 1개로 들 수 있다');
-  g.handle('B', { t: 'liftEnd' });
+  g.handle('B', { t: 'endCast' });
   run(g, CD);
 
   // 관성: 시선을 일정 속도로 돌리면 늦게 따라오고, 멈추면 지나쳤다가 돌아온다
@@ -136,7 +163,7 @@ test('T4: 들기 — 무게별 높이, 힘 부족, 시점 회전을 늦게 따�
   assert.ok(maxPast > 0.02, `멈춘 뒤 지나친다(${maxPast.toFixed(3)}rad)`);
   assert.ok(settle < 0.05, `다시 바라보는 쪽으로 돌아온다(${settle.toFixed(3)}rad)`);
   // 딛고 선 물체는 들 수 없다(무한 상승 방지)
-  g.handle('B', { t: 'liftEnd' }); run(g, CD);
+  g.handle('B', { t: 'endCast' }); run(g, CD);
   place(g, 'box1', [0, 0, 12]); place(g, 'B', [0, 0.9, 12]); run(g, 0.3);
   assert.equal(g.body('B').groundId, 'box1');
   const bp = g.body('B').pos;
@@ -295,7 +322,7 @@ test('실제 조작만으로 클리어: B가 A를 들어 올리고, <들기>를 
   hold('B', [-1.6, 4, 28.3], 1.2);
   hold('B', [-1.6, 4.5, 31], 1.2, [0, 1]);
   hold('B', [-1.6, 4.5, 31], 0.6);
-  g.handle('B', { t: 'liftEnd' });
+  g.handle('B', { t: 'endCast' });
   run(g, 1);
   assert.ok(bottom(g.body('A')) > 1.55 && g.body('A').grounded, `A가 단차 위: ${g.body('A').pos}`);
 
@@ -313,7 +340,7 @@ test('실제 조작만으로 클리어: B가 A를 들어 올리고, <들기>를 
   assert.ok(cast(g, 'A', 'B').ok, 'A가 B를 든다');
   hold('A', [-1.6, 5, 28], 1.2);
   hold('A', [0, 3.5, 31], 1.5);
-  g.handle('A', { t: 'liftEnd' });
+  g.handle('A', { t: 'endCast' });
   run(g, 1);
   assert.ok(bottom(g.body('B')) > 1.55 && g.body('B').grounded, `B가 단차 위: ${g.body('B').pos}`);
 
@@ -323,7 +350,7 @@ test('실제 조작만으로 클리어: B가 A를 들어 올리고, <들기>를 
   hold('A', [0, 6, 26.5], 1.5);
   hold('A', [3, 3, 29.5], 1.5);
   hold('A', [0.5, 3, 33], 1.5);
-  g.handle('A', { t: 'liftEnd' });
+  g.handle('A', { t: 'endCast' });
   run(g, 1.2);
   const cargo = g.body('cargo');
   assert.ok(bottom(cargo) > 1.55 && cargo.grounded, `짐이 단차 위: ${cargo.pos}`);

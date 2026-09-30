@@ -24,6 +24,7 @@ export const REASON = {
   PROTECTED: '보호 중인 대상이에요',
   BAD_AIM: '조준 정보가 올바르지 않아요',
   NOT_PLAYING: '게임이 진행 중이 아니에요',
+  SUSTAINING: '유지 중인 마법이 있어요 · 시전 종료로 먼저 끝내세요',
 };
 
 export function modeUnsupported(effectId, mode) {

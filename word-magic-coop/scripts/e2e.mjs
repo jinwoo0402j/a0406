@@ -77,20 +77,43 @@ try {
   check('<밀치기>로 B가 밀림', moved > 0.8, `${moved.toFixed(2)}m`);
   check('두 화면이 같은 B 위치를 봄', Math.hypot(b1.p[0] - b1a.p[0], b1.p[2] - b1a.p[2]) < 0.6);
 
-  // 2) B가 <들기>로 돌을 든다: 누르고 있는 동안 유지, 시점을 올리면 따라 올라간다
+  // 2) B가 <들기>로 돌을 든다: 시전 종료 전까지 유지, 시점을 올리면 따라 올라간다
+  //    실제 마우스로: 좌클릭을 눌렀다 떼도 유지되고, 우클릭(시전 종료)으로 놓는다
   await sleep(300);
-  await B.evaluate(() => { window.__wm.aimAt('rock'); window.__wm.cast(); });
+  await B.bringToFront();
+  const vp = B.viewportSize();
+  await B.mouse.click(vp.width / 2, vp.height / 2); // 첫 클릭은 마우스 잠금
+  await B.waitForFunction(() => window.__wm.locked, null, { timeout: 3000 }).catch(() => {});
+  const locked = await B.evaluate(() => window.__wm.locked);
+  if (locked) { // 잠금 직후 첫 이벤트의 이동량을 비워 낸 뒤 조준(헤드리스 브라우저 특성)
+    await B.mouse.move(vp.width / 2 + 1, vp.height / 2);
+    await B.mouse.move(vp.width / 2, vp.height / 2);
+    await sleep(100);
+  }
+  const yaw0 = await B.evaluate(() => { window.__wm.setView(0, 0); window.__wm.aimAt('rock'); return window.__wm.view.yaw; });
+  if (locked) {
+    await B.mouse.down({ button: 'left' });
+    await sleep(150);
+    await B.mouse.up({ button: 'left' });
+  } else {
+    await B.evaluate(() => window.__wm.cast()); // 마우스 잠금을 못 얻는 환경
+  }
   await sleep(300);
-  await B.evaluate(() => window.__wm.setView(window.__wm.view.yaw, 0.55));
+  await B.evaluate((y) => window.__wm.setView(y, 0.55), yaw0); // 헤드리스의 잠금 중 가짜 이동량이 시점을 돌리지 않게 복원
   await sleep(1200);
   const rockA = await bodyOf(A, 'rock');
-  check('B가 든 돌이 A 화면에서도 들려 올라감', rockA.h === 'B' && rockA.p[1] > 1.2, `h=${rockA.h} y=${rockA.p[1]}`);
+  check(`좌클릭을 뗀 뒤에도 B가 든 돌이 A 화면에서 들려 있음${locked ? '' : ' (마우스 잠금 없음: 함수로 시전)'}`, rockA.h === 'B' && rockA.p[1] > 1.2, `h=${rockA.h} y=${rockA.p[1]}`);
   await B.screenshot({ path: `${OUT}/03-B-lift-rock.png` });
   await A.screenshot({ path: `${OUT}/03-A-sees-rock.png` });
-  await B.evaluate(() => window.__wm.liftEnd());
+  const blocked = await B.evaluate(() => { window.__wm.cast(); return document.getElementById('toast').textContent; });
+  check('들고 있는 중 재시전은 시전 종료 안내', /시전 종료/.test(blocked), blocked);
+  if (locked) await B.mouse.click(vp.width / 2, vp.height / 2, { button: 'right' });
+  else await B.evaluate(() => window.__wm.endCast());
   await sleep(1300);
   const rockDown = await bodyOf(A, 'rock');
-  check('버튼을 떼면 놓아서 떨어진다', !rockDown.h && rockDown.p[1] < 0.6, `y=${rockDown.p[1]}`);
+  check('시전 종료(우클릭)로 놓아서 떨어진다', !rockDown.h && rockDown.p[1] < 0.6, `y=${rockDown.p[1]}`);
+  await B.evaluate(() => document.exitPointerLock());
+  await A.bringToFront();
 
   // 3) 같은 <들기>를 친구에게
   await B.evaluate(() => { window.__wm.setView(window.__wm.view.yaw, -0.1); window.__wm.aimAt('A'); window.__wm.cast(); });
@@ -112,7 +135,7 @@ try {
   const toast = await B.evaluate(() => document.getElementById('toast').textContent);
   check('보호 중인 A에게 시전하면 거절되고 이유 표시', reply?.k === 'castFail' && /보호/.test(reply.reason) && /보호/.test(toast), `${JSON.stringify(reply)} / 미리보기 ${JSON.stringify(aimInfo)}`);
   await B.screenshot({ path: `${OUT}/05-B-sees-A-shield.png` });
-  await B.evaluate(() => window.__wm.liftEnd());
+  await B.evaluate(() => window.__wm.endCast());
 
   // 5) 키보드 이동: A가 W를 1초간
   const a0 = await bodyOf(A, 'A');

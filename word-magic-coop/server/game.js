@@ -2,7 +2,7 @@
 // 자기 시전과 게스트 시전은 같은 handle() 경로로 같은 검증을 받는다. 네트워크와 분리되어 테스트에서 직접 구동한다.
 //
 // 주문 = 효과 단어 1개 + 수식 단어(보유·장착한 개수만큼 중첩). 대상은 시전 요청의 대상 모드(AIM/SELF/NEAR).
-// 효과마다 시전 방식이 다르다: 밀치기(즉시·한 번) / 들기(누르는 동안 지속 제어) / 파이어볼(투사체, 실제 명중 시 적용).
+// 효과마다 시전 방식이 다르다: 밀치기(즉시·한 번) / 들기(시전 종료까지 지속 제어) / 파이어볼(투사체, 실제 명중 시 적용).
 
 import { LEVEL, SEAT_IDS } from '../shared/level.js';
 import { TUNING, modFactor } from '../shared/tuning.js';
@@ -258,7 +258,8 @@ export class Game {
     switch (msg.t) {
       case 'input': return this.onInput(pid, msg);
       case 'cast': return this.onCast(pid, msg);
-      case 'liftEnd': return this.onLiftEnd(pid);
+      case 'endCast': return this.onEndCast(pid);
+      case 'liftEnd': return this.onEndCast(pid); // 이전 이름
       case 'pickup': return this.onPickup(pid);
       case 'drop': return this.onDrop(pid, msg);
       case 'equip': return this.onEquip(pid, msg);
@@ -304,7 +305,7 @@ export class Game {
     if (!effect) return fail(REASON.NO_EFFECT);
     const mode = MODE_ORDER.includes(msg.mode) ? msg.mode : 'AIM';
     if (!WORDS[effect].modes.includes(mode)) return fail(modeUnsupported(effect, mode));
-    if (p.holding) return { ok: false }; // 들기 유지 중에는 새로 시전하지 않는다
+    if (p.holding) return fail(REASON.SUSTAINING); // 지속형 마법을 유지하는 동안에는 새로 시전하지 않는다 [임시]
     if (this.time < p.cooldownUntil - 1e-9) return fail(REASON.COOLDOWN);
     const { aim, view } = this.parseAim(pid, msg);
     if (mode === 'AIM' && !aim) return fail(REASON.BAD_AIM);
@@ -383,7 +384,7 @@ export class Game {
     return { ok: true, projectile: proj.id };
   }
 
-  // <들기>: 조준한 대상을 잡고, 버튼을 누르는 동안(liftEnd 전까지) 시점을 따라 끌고 다닌다.
+  // <들기>: 조준한 대상을 잡고, 시전자가 시전 종료를 누를 때까지 시점을 따라 끌고 다닌다.
   startLift(pid, aim, view, fail) {
     const T = this.T;
     const caster = this.body(pid);
@@ -401,7 +402,9 @@ export class Game {
     return { ok: true, targets: [b.id] };
   }
 
-  onLiftEnd(pid) {
+  // 시전 종료: 시전자가 자신이 유지 중인 지속형 마법(현재는 <들기>뿐)을 직접 끝낸다.
+  // 다른 사람이 건 마법에서 벗어나는 해제(R, onRelease)와는 별개다.
+  onEndCast(pid) {
     if (!this.players[pid].holding) return { ok: false };
     this.endHold(pid, 'released');
     this.players[pid].cooldownUntil = this.time + this.T.castCooldown;

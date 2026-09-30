@@ -39,7 +39,7 @@ export const TUNING = {
   fireballKnockback: 3, // 폭발에 휩쓸린 대상의 밀림 m/s
   aimPointRange: 40, // 파이어볼이 향할 조준점을 찾는 거리
 
-  // <들기> — 누르는 동안 유지, 시점을 따라 무게·관성 있게 끌려온다 [임시 수치]
+  // <들기> — 시전하면 유지, 시전 종료로 놓음, 시점을 따라 무게·관성 있게 끌려온다 [임시 수치]
   liftRange: 8, // 들 수 있는 거리
   liftCapacity: 3, // 들기 힘(들 수 있는 최대 무게). 이보다 무거우면 들 수 없다
   liftHeightScale: 3.4, // 최대 높이 = 시전자 발밑 + scale·(1 − 무게/힘) + base
