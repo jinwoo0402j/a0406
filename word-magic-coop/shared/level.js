@@ -34,33 +34,35 @@ export const LEVEL = {
     { id: 'F', spawn: [3, 0, -0.6], color: '#34c3bd' },
   ],
   playerSize: [0.7, 1.3, 0.7],
+  playerMass: 1.6, // [임시] 친구도 들 수 있지만 무거운 편
 
-  // 이동 사물. pos는 바닥 중심 좌표. size는 AABB 한 변(가로·세로·깊이)의 길이.
+  // 이동 사물. pos는 바닥 중심 좌표. size는 AABB 한 변의 길이. mass는 들기 판정용 무게 [임시 수치].
+  // 기본 들기 힘(3)으로: 돌·상자는 높이, 사람은 단차(1.6m)를 넘을 만큼, 짐은 낮게 든다.
+  // 무거운 상자(3.6)는 <세게> 없이는 들 수 없다.
   bodies: [
-    { id: 'rock', kind: 'rock', pos: [-3, 0, 6], size: [0.7, 0.7, 0.7] },
-    { id: 'box1', kind: 'box', pos: [3, 0, 6], size: [0.9, 0.9, 0.9] },
-    { id: 'box2', kind: 'box', pos: [2.4, 0, 18.4], size: [0.9, 0.9, 0.9] },
-    { id: 'cargo', kind: 'cargo', pos: [0, 0, 26], size: [1, 1, 1] },
+    { id: 'rock', kind: 'rock', pos: [-3, 0, 6], size: [0.7, 0.7, 0.7], mass: 0.5 },
+    { id: 'box1', kind: 'box', pos: [3, 0, 6], size: [0.9, 0.9, 0.9], mass: 1 },
+    { id: 'box2', kind: 'heavy', pos: [2.4, 0, 18.4], size: [0.9, 0.9, 0.9], mass: 3.6 },
+    { id: 'dummy', kind: 'dummy', pos: [-2.6, 0, 19.6], size: [0.7, 1.5, 0.7], mass: 1.4 },
+    { id: 'cargo', kind: 'cargo', pos: [0, 0, 26], size: [1, 1, 1], mass: 2.6 },
   ],
 
-  // 단어 토큰. seat가 있으면 그 자리 플레이어의 인벤토리에서 시작하고(접속한 자리만 생긴다),
-  // pos가 있으면 월드에 놓여 있다. 2명이면 토큰 6개, 6명이면 14개.
-  // 시작 문장: A·C·E는 「대상을 민다」, B·D·F는 「대상을 띄운다」.
+  // 단어 토큰. seat가 있으면 그 자리 플레이어가 가지고 시작하고(접속한 자리만 생긴다),
+  // pos가 있으면 월드에 놓여 있다. 대상 지정 단어는 없다(대상은 모드 버튼).
+  // 시작 효과: A·C·E <밀치기>, B·D·F <들기>. 월드: <파이어볼> 1, <큰> 3, <세게> 2.
   tokens: [
-    { id: 't1', word: 'AIMED', seat: 'A' },
-    { id: 't2', word: 'PUSH', seat: 'A' },
-    { id: 't3', word: 'AIMED', seat: 'B' },
-    { id: 't4', word: 'LIFT', seat: 'B' },
-    { id: 't5', word: 'SELF', pos: [-5, 0, 17] },
-    { id: 't6', word: 'NEARBY', pos: [5, 0, 17.5] },
-    { id: 't7', word: 'AIMED', seat: 'C' },
-    { id: 't8', word: 'PUSH', seat: 'C' },
-    { id: 't9', word: 'AIMED', seat: 'D' },
-    { id: 't10', word: 'LIFT', seat: 'D' },
-    { id: 't11', word: 'AIMED', seat: 'E' },
-    { id: 't12', word: 'PUSH', seat: 'E' },
-    { id: 't13', word: 'AIMED', seat: 'F' },
-    { id: 't14', word: 'LIFT', seat: 'F' },
+    { id: 't1', word: 'PUSH', seat: 'A' },
+    { id: 't2', word: 'LIFT', seat: 'B' },
+    { id: 't3', word: 'PUSH', seat: 'C' },
+    { id: 't4', word: 'LIFT', seat: 'D' },
+    { id: 't5', word: 'PUSH', seat: 'E' },
+    { id: 't6', word: 'LIFT', seat: 'F' },
+    { id: 'w1', word: 'FIREBALL', pos: [-5, 0, 17] },
+    { id: 'w2', word: 'BIG', pos: [4.6, 0, 17.1] },
+    { id: 'w3', word: 'BIG', pos: [5.5, 0, 17.8] },
+    { id: 'w4', word: 'BIG', pos: [5.4, 0, 16.4] },
+    { id: 'w5', word: 'STRONG', pos: [-6.2, 0, 25.4] },
+    { id: 'w6', word: 'STRONG', pos: [6.2, 0, 27.2] },
   ],
 
   // 안전 위치. 마지막으로 서 있던 지면 조각(ground)과 같은 조각의 가장 가까운 지점으로 복구한다.
@@ -90,7 +92,7 @@ export const MAX_PLAYERS = SEAT_IDS.length;
 // 캐릭터 + 이동 사물의 정의(렌더링·미리보기용). 캐릭터는 자리 수만큼.
 export function bodyDefs(level = LEVEL) {
   return [
-    ...level.seats.map((s) => ({ id: s.id, kind: 'player', pos: s.spawn, size: level.playerSize, color: s.color })),
+    ...level.seats.map((s) => ({ id: s.id, kind: 'player', pos: s.spawn, size: level.playerSize, color: s.color, mass: level.playerMass })),
     ...level.bodies,
   ];
 }

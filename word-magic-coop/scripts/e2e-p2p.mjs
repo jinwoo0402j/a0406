@@ -98,18 +98,19 @@ try {
   await guest.evaluate(() => { window.__wm.aimAt('A'); window.__wm.cast(); });
   await sleep(900);
   const aOnHost = await bodyOf(host, 'A');
-  check('친구(B)의 「대상을 띄운다」가 방장 화면에서 A를 띄움', aOnHost.f > 0 && aOnHost.p[1] > 1.4, `y=${aOnHost.p[1]}`);
+  check('친구(B)의 <들기>가 방장 화면에서 A를 든다', aOnHost.h === 'B', `h=${aOnHost.h}`);
   await host.screenshot({ path: `${OUT}/p2p-2-host-lifted.png` });
   await guest.screenshot({ path: `${OUT}/p2p-2-guest-view.png` });
 
   // 5) 친구가 단어를 내려놓으면 방장 화면에 보인다
   await guest.keyboard.press('Tab');
   await sleep(300);
-  await guest.locator('.inv-card', { hasText: '띄운다' }).getByRole('button', { name: '내려놓기' }).click();
+  await guest.evaluate(() => window.__wm.liftEnd());
+  await guest.locator('.inv-card', { hasText: '들기' }).getByRole('button', { name: '내려놓기' }).click();
   await sleep(500);
   await guest.keyboard.press('Tab');
-  const t4 = await host.evaluate(() => window.__wm.latest.k.find((k) => k.id === 't4'));
-  check('친구가 내려놓은 「띄운다」가 방장 화면의 월드에 있음', !t4.o && !!t4.p);
+  const t2 = await host.evaluate(() => window.__wm.latest.k.find((k) => k.id === 't2'));
+  check('친구가 내려놓은 <들기>가 방장 화면의 월드에 있음', !t2.o && !!t2.p);
 
   // 6) 세 번째 사람은 진행 중인 판에 C로 참가 → 모두의 화면에 보이고, 나가도 게임은 계속
   const third = await openPage('세번째', link);

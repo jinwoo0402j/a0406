@@ -4,14 +4,14 @@ import { Renderer } from './render.js';
 import { cameraRig, CAM } from './camera.js';
 import { FONT_STACK } from './labels.js';
 import { LEVEL, SEAT_IDS, bodyDefs } from '../shared/level.js';
-import { TUNING } from '../shared/tuning.js';
-import { WORDS } from '../shared/words.js';
-import { resolveSpell } from '../shared/targeting.js';
+import { TUNING, modFactor } from '../shared/tuning.js';
+import { WORDS, KIND, MOD_IDS, MODE_ORDER, MODE_LABEL, spellLabel } from '../shared/words.js';
+import { resolveTargets, modeUnsupported, REASON } from '../shared/targeting.js';
 import { HostSession } from './host.js';
 import { hostRoom, joinRoom, CODE_RE } from './p2p.js';
 
 const $ = (id) => document.getElementById(id);
-const NAMES = { ...Object.fromEntries(SEAT_IDS.map((id) => [id, id])), rock: '돌', box1: '상자', box2: '상자', cargo: '짐' };
+const NAMES = { ...Object.fromEntries(SEAT_IDS.map((id) => [id, id])), rock: '돌', box1: '상자', box2: '무거운 상자', dummy: '허수아비', cargo: '짐' };
 const BODY_DEF = new Map(bodyDefs().map((d) => [d.id, d]));
 const SEAT_COLOR = Object.fromEntries(LEVEL.seats.map((s) => [s.id, s.color]));
 const SENS = 0.0025;
@@ -39,6 +39,10 @@ const S = {
   frame: null,
   closingOnPurpose: false,
   editorKey: '',
+  mode: 'AIM', // 대상 모드(F로 전환): 조준 대상 → 본인 → 주변
+  holding: false, // <들기> 버튼을 누르고 있는 중
+  lastAim: '',
+  projectiles: [],
   recent: [],
   renderTime: 0,
 };
@@ -183,7 +187,7 @@ function updateWho() {
   $('who-chip').style.background = SEAT_COLOR[S.me];
   const other = S.me === 'A' ? 'B' : 'A';
   $('who-name').textContent = S.solo ? `플레이어 ${S.me} 조작 중 · Q로 ${other} 전환` : `플레이어 ${S.me} (나)`;
-  $('keys').textContent = `WASD 이동 · Space 점프 · 좌클릭 시전 · E 줍기 · R 해제 · Tab 편집${S.solo ? ' · Q 캐릭터 전환' : ''}`;
+  $('keys').textContent = `WASD 이동 · Space 점프 · 좌클릭 시전 · F 대상 모드 · E 줍기 · R 해제 · Tab 편집${S.solo ? ' · Q 캐릭터 전환' : ''}`;
 }
 
 function switchCharacter() {
@@ -334,12 +338,21 @@ function interpolated() {
     out.set(x.id, {
       p: [lerp(x.p[0], y.p[0], kk), lerp(x.p[1], y.p[1], kk), lerp(x.p[2], y.p[2], kk)],
       y: lerpAngle(x.y, y.y, kk),
-      f: y.f,
       i: y.i,
+      d: y.d,
+      h: y.h,
+      hp: y.hp,
+      dn: y.dn,
       g: y.g,
       speed: jump ? 0 : Math.hypot(y.p[0] - x.p[0], y.p[2] - x.p[2]) / dtS,
     });
   }
+  // 투사체: 두 스냅숏 모두에 있으면 보간, 새로 생긴 것은 최신 위치
+  const apr = new Map((a.pr || []).map((x) => [x.id, x]));
+  S.projectiles = (b.pr || []).map((y) => {
+    const x = apr.get(y.id);
+    return x ? { ...y, p: [lerp(x.p[0], y.p[0], k), lerp(x.p[1], y.p[1], k), lerp(x.p[2], y.p[2], k)] } : y;
+  });
   return out;
 }
 
@@ -354,16 +367,17 @@ function log(text) {
 }
 
 let toastTimer;
-function toast(text) {
+function toast(text, kind = 'bad') {
   $('toast').textContent = text;
-  $('toast').classList.add('show');
+  $('toast').className = `show ${kind}`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => $('toast').classList.remove('show'), 1600);
+  toastTimer = setTimeout(() => { $('toast').className = kind; }, 1600);
 }
 
 const who = (id) => (id === S.me ? '나' : `플레이어 ${id}`);
 const whoSubj = (id) => (id === S.me ? '내가' : `플레이어 ${id}가`);
-const wlabel = (w) => `「${WORDS[w].label}」`;
+const wlabel = (w) => `<${WORDS[w].label}>`;
+const nameOf = (id) => (id === S.me ? '나' : NAMES[id] || id);
 
 function onEvent(e) {
   S.recent.push(e);
@@ -373,12 +387,44 @@ function onEvent(e) {
       const pos = new Map();
       for (const [id, v] of S.frame?.bodies || []) pos.set(id, v.p);
       renderer.castFx(e, pos);
-      const names = e.targets.map((id) => (id === S.me ? '나' : NAMES[id]));
-      const sentence = `${WORDS[e.target].label} ${WORDS[e.action].label}`;
-      log(`${who(e.by)}: 「${sentence}」 → ${names.join(', ')}`);
+      const spell = spellLabel(e.effect, e.mods);
+      log(e.effect === 'FIREBALL'
+        ? `${who(e.by)}: ${spell} 발사!`
+        : `${who(e.by)}: ${spell} (${MODE_LABEL[e.mode]}) → ${e.targets.map(nameOf).join(', ')}`);
       break;
     }
+    case 'liftStart':
+      renderer.poke(e.by, 'cast');
+      log(`${who(e.by)}: ${spellLabel('LIFT', e.mods)} → ${nameOf(e.target)}`);
+      break;
+    case 'liftEnd':
+      if (e.by === S.me) S.holding = false;
+      if (e.reason === 'word') log(`${whoSubj(e.by)} <들기> 단어가 없어져 ${nameOf(e.target)}을(를) 놓쳤어요`);
+      if (e.reason === 'heavy') log(`${whoSubj(e.by)} 힘이 모자라 ${nameOf(e.target)}을(를) 놓쳤어요`);
+      if (e.reason === 'far') log(`${nameOf(e.target)}이(가) 너무 멀어져 놓쳤어요`);
+      if (e.reason === 'released-by-target') log(`${nameOf(e.target)}이(가) R로 풀려났어요`);
+      break;
+    case 'boom': {
+      renderer.boomFx(e);
+      const parts = e.hits.map((h) => {
+        if (h.effects.includes('damage')) return `${nameOf(h.id)} 피해 ${Math.round(e.damage)}`;
+        if (h.effects.includes('debuff')) return `${nameOf(h.id)} 그을림(잠시 느려짐)`;
+        return null;
+      }).filter(Boolean);
+      if (parts.length) log(`파이어볼 명중: ${parts.join(', ')}`);
+      break;
+    }
+    case 'fizzle':
+      renderer.fizzleFx(e.pos);
+      break;
+    case 'dummyDown':
+      log('허수아비가 쓰러졌어요 (잠시 뒤 다시 일어나요)');
+      break;
+    case 'dummyUp':
+      log('허수아비가 다시 일어났어요');
+      break;
     case 'castFail':
+      if (e.by === S.me) S.holding = false; // 들기 시전이 거절되면 누르고 있음 상태도 푼다
       toast(e.reason);
       break;
     case 'pickup':
@@ -436,8 +482,12 @@ function wishVector() {
 
 function sendInput(jump = false) {
   const wish = wishVector().map((v) => Math.round(v * 1000) / 1000);
-  send({ t: 'input', wish, jump });
+  const msg = { t: 'input', wish, jump };
+  const rig = currentRig();
+  if (rig) msg.aim = rig.dir.map((v) => Math.round(v * 1000) / 1000); // 시선 방향(들기 중 물체가 따라온다)
+  send(msg);
   S.lastWish = wish.join(',');
+  S.lastAim = msg.aim?.join(',') || '';
   S.lastInputAt = performance.now();
 }
 
@@ -447,15 +497,33 @@ function currentRig() {
   return cameraRig(me.p, S.yaw, S.pitch);
 }
 
+function myEffect() {
+  const ps = mySnap();
+  return ps?.e ? tokenWord(ps.e) : null;
+}
+
 function cast() {
   const rig = currentRig();
   if (!rig) return;
+  if (myEffect() === 'LIFT') S.holding = true; // 버튼을 떼면 놓는다
   send({
     t: 'cast',
+    mode: S.mode,
     origin: rig.pos.map((v) => Math.round(v * 1000) / 1000),
     dir: rig.dir.map((v) => Math.round(v * 10000) / 10000),
     vt: Math.round(S.renderTime * 1000) / 1000, // 내가 보고 있던 호스트 시점
   });
+}
+
+function releaseLift() {
+  if (!S.holding) return;
+  S.holding = false;
+  send({ t: 'liftEnd' });
+}
+
+function cycleMode() {
+  S.mode = MODE_ORDER[(MODE_ORDER.indexOf(S.mode) + 1) % MODE_ORDER.length];
+  toast(`대상 모드: ${MODE_LABEL[S.mode]}`, 'info');
 }
 
 function requestLock() {
@@ -471,6 +539,7 @@ function toggleEditor(open = !S.editorOpen) {
   S.editorOpen = open;
   $('editor').hidden = !open;
   if (open) {
+    releaseLift();
     if (document.pointerLockElement) document.exitPointerLock();
     S.editorKey = '';
     renderEditor();
@@ -492,7 +561,8 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') { e.preventDefault(); sendInput(true); }
   if (e.code === 'KeyE') send({ t: 'pickup' });
   if (e.code === 'KeyR') send({ t: 'release' });
-  if (e.code === 'KeyQ') switchCharacter();
+  if (e.code === 'KeyQ') { releaseLift(); switchCharacter(); }
+  if (e.code === 'KeyF') cycleMode();
 });
 window.addEventListener('keyup', (e) => S.keys.delete(e.code));
 window.addEventListener('blur', () => S.keys.clear());
@@ -502,8 +572,10 @@ $('view').addEventListener('mousedown', (e) => {
   if (!S.locked) { requestLock(); return; }
   if (e.button === 0) cast();
 });
+window.addEventListener('mouseup', (e) => { if (e.button === 0) releaseLift(); });
 document.addEventListener('pointerlockchange', () => {
   S.locked = document.pointerLockElement === $('view');
+  if (!S.locked) releaseLift();
 });
 document.addEventListener('mousemove', (e) => {
   if (!S.locked || S.editorOpen) return; // 편집창을 열면 카메라 회전을 막는다
@@ -522,15 +594,41 @@ function tokenWord(id) {
 function renderEditor() {
   const ps = mySnap();
   if (!ps) return;
-  const key = JSON.stringify([ps.s, ps.inv]);
+  const key = JSON.stringify([ps.e, ps.m, ps.inv]);
   if (key === S.editorKey) return;
   S.editorKey = key;
-  for (const slot of ['target', 'action']) {
-    const el = $(`ed-slot-${slot}`);
-    const w = ps.s[slot] && tokenWord(ps.s[slot]);
-    el.textContent = w ? WORDS[w].label : '비어 있음';
-    el.classList.toggle('empty', !w);
+  // 효과 칸(1개)
+  const ew = ps.e && tokenWord(ps.e);
+  $('ed-effect').textContent = ew ? WORDS[ew].label : '비어 있음';
+  $('ed-effect').classList.toggle('empty', !ew);
+  // 수식: 가진 개수까지 골라서 붙인다
+  const box = $('ed-mods');
+  box.innerHTML = '';
+  for (const wid of MOD_IDS) {
+    const owned = ps.inv.filter((id) => tokenWord(id) === wid).length;
+    if (!owned) continue;
+    const n = ps.mc?.[wid] || 0;
+    const row = document.createElement('div');
+    row.className = 'mod-row';
+    row.innerHTML = `<span class="word mod">${WORDS[wid].label}</span><span class="mod-count">× ${n} <small>/ 보유 ${owned}</small></span>`;
+    const minus = document.createElement('button');
+    minus.type = 'button';
+    minus.className = 'ghost';
+    minus.textContent = '−';
+    minus.disabled = n <= 0;
+    minus.onclick = () => send({ t: 'mod', word: wid, count: n - 1 });
+    const plus = document.createElement('button');
+    plus.type = 'button';
+    plus.className = 'ghost';
+    plus.textContent = '+';
+    plus.disabled = n >= owned;
+    plus.onclick = () => send({ t: 'mod', word: wid, count: n + 1 });
+    row.append(minus, plus);
+    box.append(row);
   }
+  if (!box.children.length) box.innerHTML = '<div class="inv-empty">가진 수식 단어가 없어요</div>';
+  $('ed-spell').textContent = spellLabel(ew, ps.mc);
+
   const inv = $('inventory');
   inv.innerHTML = '';
   if (!ps.inv.length) {
@@ -538,17 +636,20 @@ function renderEditor() {
   }
   for (const id of ps.inv) {
     const w = WORDS[tokenWord(id)];
-    const equipped = ps.s[w.slot] === id;
+    const isEffect = w.kind === KIND.EFFECT;
+    const equipped = isEffect ? ps.e === id : ps.m.includes(id);
     const card = document.createElement('div');
     card.className = `inv-card${equipped ? ' equipped' : ''}`;
     const word = document.createElement('div');
-    word.className = `word ${w.slot}`;
+    word.className = `word ${isEffect ? 'action' : 'mod'}`;
     word.textContent = w.label;
-    word.title = '누르면 장착';
-    word.onclick = () => send({ t: 'equip', slot: w.slot, token: id });
+    if (isEffect) {
+      word.title = '누르면 효과 칸에 장착';
+      word.onclick = () => send({ t: 'equip', slot: 'effect', token: id });
+    }
     const meta = document.createElement('div');
     meta.className = 'meta';
-    meta.innerHTML = `<span>${w.slot === 'target' ? '대상 지정' : '작용'}${equipped ? ' · 장착 중' : ''}</span>`;
+    meta.innerHTML = `<span>${isEffect ? '효과' : '수식'}${equipped ? ' · 장착 중' : ''}</span>`;
     const drop = document.createElement('button');
     drop.className = 'ghost';
     drop.type = 'button';
@@ -560,9 +661,7 @@ function renderEditor() {
   }
 }
 
-for (const b of document.querySelectorAll('[data-unequip]')) {
-  b.onclick = () => send({ t: 'equip', slot: b.dataset.unequip, token: null });
-}
+$('unequip-effect').onclick = () => send({ t: 'equip', slot: 'effect', token: null });
 $('close-editor').onclick = () => toggleEditor(false);
 // 확인 창(confirm)이 막힌 환경도 있어 페이지 안에서 두 번 눌러 확인한다.
 let restartArmed = null;
@@ -629,23 +728,39 @@ $('editor').addEventListener('click', () => { if (document.activeElement instanc
 function buildPreview(bodies, rig) {
   const ps = mySnap();
   if (!ps || !rig) return null;
-  const tw = ps.s.target && tokenWord(ps.s.target);
-  const aw = ps.s.action && tokenWord(ps.s.action);
-  if (!tw || !aw) return { incomplete: true, ok: new Set(), bad: new Set() };
+  const none = { ok: new Set(), bad: new Set() };
+  const ew = ps.e && tokenWord(ps.e);
+  if (!ew) return { kind: 'none', reason: REASON.NO_EFFECT, ...none };
+  if (!WORDS[ew].modes.includes(S.mode)) return { kind: 'mode', reason: modeUnsupported(ew, S.mode), ...none };
+  if (ps.hold) return { kind: 'holding', ok: new Set([ps.hold]), bad: new Set() };
+  if (ew === 'FIREBALL') return { kind: 'fire', ...none };
+  const mc = ps.mc || {};
   const world = {
     statics: LEVEL.statics,
     bodies: [...bodies].map(([id, v]) => {
       const d = BODY_DEF.get(id);
       return {
-        id, kind: d.kind, pos: v.p, half: d.size.map((x) => x / 2),
-        traits: { movable: true, floatable: true }, immune: v.i > 0,
+        id, kind: d.kind, pos: v.p, half: d.size.map((x) => x / 2), mass: d.mass ?? 1,
+        traits: { movable: true, liftable: true, damageable: d.kind === 'dummy' },
+        immune: v.i > 0, heldBy: v.h || null,
       };
     }),
   };
-  const res = resolveSpell(WORDS[tw].rule, WORDS[aw].action, world, S.me, { origin: rig.pos, dir: rig.dir });
+  const aim = { origin: rig.pos, dir: rig.dir };
+  let res;
+  let radius = 0;
+  if (ew === 'PUSH') {
+    const reach = modFactor(TUNING, mc, 'BIG', 'pushReach');
+    radius = TUNING.nearbyRadius * reach;
+    res = resolveTargets(S.mode, 'PUSH', world, S.me, aim, { range: TUNING.aimedMaxRange * reach, radius });
+  } else {
+    const capacity = TUNING.liftCapacity * modFactor(TUNING, mc, 'STRONG', 'liftCapacity');
+    res = resolveTargets('AIM', 'LIFT', world, S.me, aim, { range: TUNING.liftRange, capacity });
+  }
   return {
-    rule: WORDS[tw].rule,
+    kind: ew === 'PUSH' ? 'push' : 'lift',
     res,
+    radius,
     ok: new Set(res.applicable),
     bad: new Set(res.rejected.filter((r) => r.type === 'body').map((r) => r.id)),
   };
@@ -654,14 +769,17 @@ function buildPreview(bodies, rig) {
 function updateHud(frame) {
   const ps = mySnap();
   if (!ps) return;
-  const tw = ps.s.target && tokenWord(ps.s.target);
-  const aw = ps.s.action && tokenWord(ps.s.action);
-  const st = $('slot-target');
-  const sa = $('slot-action');
-  st.textContent = tw ? WORDS[tw].label : '[대상 지정]';
-  sa.textContent = aw ? WORDS[aw].label : '[작용]';
-  st.classList.toggle('empty', !tw);
-  sa.classList.toggle('empty', !aw);
+  // 대상 모드와 현재 주문(효과 + 수식 중첩)
+  $('mode-chip').textContent = MODE_LABEL[S.mode];
+  const ew = ps.e && tokenWord(ps.e);
+  const chips = MOD_IDS.filter((id) => ps.mc?.[id] > 0)
+    .map((id) => `<span class="word mod">${WORDS[id].label}${ps.mc[id] > 1 ? ` × ${ps.mc[id]}` : ''}</span>`);
+  chips.push(ew ? `<span class="word action">${WORDS[ew].label}</span>` : '<span class="word action empty">[효과]</span>');
+  const html = chips.join('<span class="plus-sm">+</span>');
+  if ($('spell-line').dataset.html !== html) {
+    $('spell-line').innerHTML = html;
+    $('spell-line').dataset.html = html;
+  }
 
   const cdLeft = Math.max(0, ps.cd - (performance.now() / 1000 - S.latestAt));
   $('cooldown-bar').style.width = `${(1 - cdLeft / TUNING.castCooldown) * 100}%`;
@@ -670,27 +788,25 @@ function updateHud(frame) {
   const note = $('preview-note');
   const ch = $('crosshair');
   ch.className = '';
-  if (S.editorOpen) {
-    note.textContent = '주문 편집 중 (시전·시점 회전 잠금)';
-    note.className = 'preview-note';
-  } else if (!pv || pv.incomplete) {
-    note.textContent = 'Tab에서 두 슬롯을 채우세요';
-    note.className = 'preview-note bad';
-  } else if (pv.ok.size) {
-    const names = [...pv.ok].map((id) => (id === S.me ? '나' : NAMES[id]));
-    note.textContent = `적용 대상: ${names.join(', ')}`;
-    note.className = 'preview-note ok';
-    if (pv.rule === 'AIMED') ch.className = 'ok';
+  const setNote = (text, cls) => { note.textContent = text; note.className = `preview-note ${cls}`; };
+  if (S.editorOpen) setNote('주문 편집 중 (시전·시점 회전 잠금)', '');
+  else if (!pv) setNote('', '');
+  else if (pv.kind === 'none' || pv.kind === 'mode') { setNote(pv.reason, 'bad'); ch.className = 'bad'; }
+  else if (pv.kind === 'holding') { setNote(`${nameOf(ps.hold)}을(를) 들고 있어요 · 시점을 돌려 옮기고, 버튼을 떼면 놓아요`, 'ok'); ch.className = 'ok'; }
+  else if (pv.kind === 'fire') { setNote('조준한 곳으로 날아가요 · 실제로 맞은 대상에 적용돼요', ''); ch.className = 'fire'; }
+  else if (pv.ok.size) {
+    setNote(`${pv.kind === 'lift' ? '들 수 있어요' : '적용 대상'}: ${[...pv.ok].map(nameOf).join(', ')}`, 'ok');
+    if (S.mode === 'AIM') ch.className = 'ok';
   } else {
-    note.textContent = pv.res.reason;
-    note.className = 'preview-note bad';
-    if (pv.rule === 'AIMED') ch.className = pv.res.selection.selected[0]?.type === 'static' ? 'blocked' : 'bad';
+    setNote(pv.res.reason, 'bad');
+    if (S.mode === 'AIM') ch.className = pv.res.selection.selected[0]?.type === 'static' ? 'blocked' : 'bad';
   }
 
   // 상태 표시
   const me = frame.bodies.get(S.me);
   const badges = [];
-  if (me?.f > 0) badges.push(`<span class="badge float">떠 있음 ${me.f.toFixed(1)}초</span>`);
+  if (me?.h) badges.push(`<span class="badge float">${nameOf(me.h)}에게 들려 있어요 · R로 풀기</span>`);
+  if (me?.d > 0) badges.push(`<span class="badge ext">그을림 · 느려짐 ${me.d.toFixed(1)}초</span>`);
   if (me?.i > 0) badges.push(`<span class="badge shield">보호 중 ${me.i.toFixed(1)}초</span>`);
   for (const id of SEAT_IDS) {
     const ob = id !== S.me && frame.bodies.get(id);
@@ -748,7 +864,7 @@ function frame() {
     // 로비 배경: 천천히 도는 카메라
     const a = t * 0.1;
     renderer.render({
-      bodies: new Map(LEVEL.bodies.map((d) => [d.id, { p: [d.pos[0], d.pos[1] + d.size[1] / 2, d.pos[2]], y: 0, f: 0, i: 0, g: 1, speed: 0 }])),
+      bodies: new Map(LEVEL.bodies.map((d) => [d.id, { p: [d.pos[0], d.pos[1] + d.size[1] / 2, d.pos[2]], y: 0, i: 0, d: 0, g: 1, speed: 0, hp: d.kind === 'dummy' ? TUNING.dummyHp : undefined }])),
       tokens: LEVEL.tokens.filter((x) => x.pos).map((x) => ({ id: x.id, w: x.word, p: x.pos })),
       me: null,
       camera: { pos: [Math.sin(a) * 26, 16, 16 + Math.cos(a) * 26], look: [0, 0, 16] },
@@ -756,9 +872,10 @@ function frame() {
     return;
   }
 
-  // 입력 전송: 바뀌었거나 주기적으로
+  // 입력 전송: 바뀌었거나 주기적으로. 들기 중에는 시선이 바뀌면 자주(초당 최대 30회) 보낸다.
   const wish = wishVector().map((v) => Math.round(v * 1000) / 1000).join(',');
-  if (wish !== S.lastWish || nowMs - S.lastInputAt > 100) sendInput(false);
+  const aimNow = currentRig()?.dir.map((v) => Math.round(v * 1000) / 1000).join(',') || '';
+  if (wish !== S.lastWish || nowMs - S.lastInputAt > 100 || (S.holding && aimNow !== S.lastAim && nowMs - S.lastInputAt > 33)) sendInput(false);
 
   const bodies = interpolated();
   const me = bodies.get(S.me);
@@ -770,7 +887,8 @@ function frame() {
     tokens: S.latest.k,
     me: S.me,
     preview,
-    nearby: preview?.rule === 'NEARBY',
+    nearby: preview?.kind === 'push' && S.mode === 'NEAR' ? preview.radius : 0,
+    projectiles: S.projectiles,
     pickable: nearestPickable(bodies),
     camera: { pos: rig.pos, look: rig.look },
     cleared: S.latest.g.c,
@@ -837,6 +955,9 @@ window.__wm = {
   toggleEditor,
   switchCharacter,
   get solo() { return S.solo; },
+  get mode() { return S.mode; },
+  setMode(m) { S.mode = m; },
+  liftEnd: releaseLift,
   createRoom,
   joinByCode,
   get roomCode() { return $('room-code').textContent; },

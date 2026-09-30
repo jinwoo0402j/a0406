@@ -74,38 +74,45 @@ try {
   const b1 = await bodyOf(B, 'B');
   const b1a = await bodyOf(A, 'B');
   const moved = Math.hypot(b1.p[0] - b0.p[0], b1.p[2] - b0.p[2]);
-  check('「대상을 민다」로 B가 밀림', moved > 0.8, `${moved.toFixed(2)}m`);
+  check('<밀치기>로 B가 밀림', moved > 0.8, `${moved.toFixed(2)}m`);
   check('두 화면이 같은 B 위치를 봄', Math.hypot(b1.p[0] - b1a.p[0], b1.p[2] - b1a.p[2]) < 0.6);
 
-  // 2) B가 돌을 띄운다 (같은 문장, 다른 대상)
+  // 2) B가 <들기>로 돌을 든다: 누르고 있는 동안 유지, 시점을 올리면 따라 올라간다
   await sleep(300);
   await B.evaluate(() => { window.__wm.aimAt('rock'); window.__wm.cast(); });
-  await sleep(800);
+  await sleep(300);
+  await B.evaluate(() => window.__wm.setView(window.__wm.view.yaw, 0.55));
+  await sleep(1200);
   const rockA = await bodyOf(A, 'rock');
-  check('B가 띄운 돌이 A 화면에서도 떠 있음', rockA.f > 0 && rockA.p[1] > 1.5, `y=${rockA.p[1]}`);
+  check('B가 든 돌이 A 화면에서도 들려 올라감', rockA.h === 'B' && rockA.p[1] > 1.2, `h=${rockA.h} y=${rockA.p[1]}`);
   await B.screenshot({ path: `${OUT}/03-B-lift-rock.png` });
   await A.screenshot({ path: `${OUT}/03-A-sees-rock.png` });
+  await B.evaluate(() => window.__wm.liftEnd());
+  await sleep(1300);
+  const rockDown = await bodyOf(A, 'rock');
+  check('버튼을 떼면 놓아서 떨어진다', !rockDown.h && rockDown.p[1] < 0.6, `y=${rockDown.p[1]}`);
 
-  // 3) 같은 「대상을 띄운다」를 친구에게
-  await sleep(400);
-  await B.evaluate(() => { window.__wm.aimAt('A'); window.__wm.cast(); });
-  await sleep(700);
+  // 3) 같은 <들기>를 친구에게
+  await B.evaluate(() => { window.__wm.setView(window.__wm.view.yaw, -0.1); window.__wm.aimAt('A'); window.__wm.cast(); });
+  await sleep(900);
   const aA = await bodyOf(A, 'A');
-  check('같은 문장으로 친구(A)도 띄움', aA.f > 0, `f=${aA.f}`);
+  check('같은 주문으로 친구(A)도 든다', aA.h === 'B', `h=${aA.h}`);
   await A.screenshot({ path: `${OUT}/04-A-lifted.png` });
 
-  // 4) A가 R로 해제 → 양쪽 화면에 보호 상태
+  // 4) A가 R로 풀기 → 양쪽 화면에 보호 상태, 보호 중에는 B의 마법이 거절된다
   await A.keyboard.press('KeyR');
-  await sleep(250);
+  await sleep(300);
   const aShieldOnB = await bodyOf(B, 'A');
-  check('R 해제 후 B 화면에서도 A 보호 상태', aShieldOnB.i > 0 && aShieldOnB.f === 0, `i=${aShieldOnB.i}`);
+  check('R로 풀면 B 화면에서도 A가 풀리고 보호 상태', aShieldOnB.i > 0 && !aShieldOnB.h, `i=${aShieldOnB.i} h=${aShieldOnB.h}`);
+  await sleep(1100);
   const n0 = await B.evaluate(() => window.__wm.recent.length);
   const aimInfo = await B.evaluate(() => { window.__wm.aimAt('A'); const p = window.__wm.previewNow(); window.__wm.cast(); return p; });
-  await B.waitForFunction((n) => window.__wm.recent.slice(n).some((e) => (e.k === 'cast' || e.k === 'castFail') && e.by === 'B'), n0, { timeout: 3000 }).catch(() => {});
-  const reply = await B.evaluate((n) => window.__wm.recent.slice(n).find((e) => (e.k === 'cast' || e.k === 'castFail') && e.by === 'B'), n0);
+  await B.waitForFunction((n) => window.__wm.recent.slice(n).some((e) => (e.k === 'liftStart' || e.k === 'castFail') && e.by === 'B'), n0, { timeout: 3000 }).catch(() => {});
+  const reply = await B.evaluate((n) => window.__wm.recent.slice(n).find((e) => (e.k === 'liftStart' || e.k === 'castFail') && e.by === 'B'), n0);
   const toast = await B.evaluate(() => document.getElementById('toast').textContent);
   check('보호 중인 A에게 시전하면 거절되고 이유 표시', reply?.k === 'castFail' && /보호/.test(reply.reason) && /보호/.test(toast), `${JSON.stringify(reply)} / 미리보기 ${JSON.stringify(aimInfo)}`);
   await B.screenshot({ path: `${OUT}/05-B-sees-A-shield.png` });
+  await B.evaluate(() => window.__wm.liftEnd());
 
   // 5) 키보드 이동: A가 W를 1초간
   const a0 = await bodyOf(A, 'A');
@@ -117,38 +124,57 @@ try {
   const a1 = await bodyOf(B, 'A');
   check('WASD 이동이 상대 화면에 반영', a1.p[2] - a0.p[2] > 2, `${(a1.p[2] - a0.p[2]).toFixed(2)}m`);
 
-  // 6) B가 Tab 편집창에서 「대상을」을 내려놓는다 → 슬롯이 비고, A 화면에 단어가 보인다
+  // 6) B가 Tab 편집창에서 <들기>를 내려놓는다 → 효과 칸이 비고, A 화면에 단어가 보인다
   await B.keyboard.press('Tab');
   await sleep(300);
   await B.screenshot({ path: `${OUT}/06-B-editor.png` });
-  await B.locator('.inv-card', { hasText: '대상을' }).getByRole('button', { name: '내려놓기' }).click();
+  await B.locator('.inv-card', { hasText: '들기' }).getByRole('button', { name: '내려놓기' }).click();
   await sleep(400);
-  const bSlots = await B.evaluate(() => window.__wm.latest.p.B.s);
-  check('장착 단어를 내려놓으면 슬롯이 빔', bSlots.target === null, JSON.stringify(bSlots));
-  await B.screenshot({ path: `${OUT}/07-B-editor-after-drop.png` });
+  const bEffect = await B.evaluate(() => window.__wm.latest.p.B.e);
+  check('장착한 효과를 내려놓으면 효과 칸이 빔', bEffect === null, String(bEffect));
   await B.keyboard.press('Tab');
-  const t3OnA = await A.evaluate(() => window.__wm.latest.k.find((k) => k.id === 't3'));
-  check('내려놓은 단어가 A 화면의 월드에 있음', !t3OnA.o && !!t3OnA.p);
+  const t2OnA = await A.evaluate(() => window.__wm.latest.k.find((k) => k.id === 't2'));
+  check('내려놓은 단어가 A 화면의 월드에 있음', !t2OnA.o && !!t2OnA.p);
   await sleep(300);
   await B.screenshot({ path: `${OUT}/08-B-hud-incomplete.png` });
+
+  // 7) F로 대상 모드 전환: A의 같은 <밀치기>가 주변 모드로 친구·상자를 함께 민다
+  await A.keyboard.press('KeyF');
+  await A.keyboard.press('KeyF');
+  const modeA = await A.evaluate(() => window.__wm.mode);
+  check('F를 두 번 누르면 주변 모드', modeA === 'NEAR', modeA);
 
   // 시각 확인용: 호스트 상태를 직접 배치한다(규칙 검증이 아니라 화면 표시 확인). 결과는 [시각]으로 구분한다.
   const place = (id, [x, y, z]) => {
     const b = srv.game.body(id);
-    Object.assign(b, { pos: [x, y + b.half[1], z], vy: 0, ext: [0, 0], inVel: [0, 0], float: null });
+    Object.assign(b, { pos: [x, y + b.half[1], z], vy: 0, ext: [0, 0], inVel: [0, 0] });
   };
-  place('B', [3.8, 0, 17]);
-  place('A', [5.5, 0, 17.6]);
-  await sleep(300);
-  srv.game.handle('B', { t: 'pickup' }); // 「주변의 대상들을」 (빈 대상 슬롯에 자동 장착)
-  await B.evaluate(() => window.__wm.setView(-0.4, -0.25));
+  place('A', [3, 0, 8]);
+  place('B', [4.4, 0, 8.6]);
+  place('box1', [1.8, 0, 9]);
+  await A.evaluate(() => window.__wm.setView(0.3, -0.35));
   await sleep(700);
-  const nb = await B.evaluate(() => ({ rule: window.__wm.preview?.rule, ok: [...(window.__wm.preview?.ok || [])] }));
-  check('[시각] 「주변의 대상들을」 범위 표시와 친구·상자 강조', nb.rule === 'NEARBY' && nb.ok.includes('A') && nb.ok.includes('box2'), JSON.stringify(nb));
-  await B.screenshot({ path: `${OUT}/10-B-nearby-preview.png` });
-  await B.evaluate(() => window.__wm.cast());
+  const nb = await A.evaluate(() => ({ kind: window.__wm.preview?.kind, ok: [...(window.__wm.preview?.ok || [])] }));
+  check('[시각] 주변 모드 범위 표시와 친구·상자 강조', nb.kind === 'push' && nb.ok.includes('B') && nb.ok.includes('box1'), JSON.stringify(nb));
+  await A.screenshot({ path: `${OUT}/10-A-near-preview.png` });
+  await A.evaluate(() => window.__wm.cast());
+  await sleep(500);
+  await A.screenshot({ path: `${OUT}/11-A-near-push.png` });
+
+  // [시각] <큰> × 3 + <파이어볼>: 날아가는 크기와 명중 폭발
+  const g = srv.game;
+  g.token('w1').owner = 'A'; g.token('w1').pos = null; g.players.A.slots.effect = 'w1';
+  for (const id of ['w2', 'w3', 'w4']) { g.token(id).owner = 'A'; g.token(id).pos = null; g.players.A.slots.mods.push(id); }
+  place('A', [-2.6, 0, 13]);
+  await A.evaluate(() => window.__wm.setMode('AIM'));
+  await sleep(600);
+  const hp0 = g.body('dummy').hp;
+  await A.evaluate(() => { window.__wm.aimAt('dummy'); window.__wm.cast(); });
+  await sleep(250);
+  await A.screenshot({ path: `${OUT}/12-A-fireball-flight.png` });
   await sleep(900);
-  await B.screenshot({ path: `${OUT}/11-B-nearby-lift.png` });
+  await A.screenshot({ path: `${OUT}/13-A-fireball-hit.png` });
+  check('[시각] <큰>×3 파이어볼이 날아가 허수아비에 명중', g.body('dummy').hp < hp0, `hp ${hp0} → ${g.body('dummy').hp}`);
 
   place('cargo', [0, 1.6, 34]);
   place('A', [-1.5, 1.6, 34]);
@@ -158,7 +184,7 @@ try {
   await Promise.all([A, B].map((p) => p.waitForFunction(() => !document.getElementById('clear-banner').hidden, null, { timeout: 5000 }).catch(() => {})));
   const cleared = await Promise.all([A, B].map((p) => p.evaluate(() => !document.getElementById('clear-banner').hidden)));
   check('[시각] 도착 성공 표시가 양쪽 화면에 보임', cleared.every(Boolean), JSON.stringify(cleared));
-  await A.screenshot({ path: `${OUT}/12-A-clear.png` });
+  await A.screenshot({ path: `${OUT}/14-A-clear.png` });
 
   // 7) B의 연결이 끊기면 A는 안내 후 로비로
   await B.close();
