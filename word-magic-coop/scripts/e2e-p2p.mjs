@@ -105,7 +105,7 @@ try {
   // 5) 친구가 단어를 내려놓으면 방장 화면에 보인다
   await guest.keyboard.press('Tab');
   await sleep(300);
-  await guest.evaluate(() => window.__wm.liftEnd());
+  await guest.evaluate(() => window.__wm.endCast());
   await guest.locator('.inv-card', { hasText: '들기' }).getByRole('button', { name: '내려놓기' }).click();
   await sleep(500);
   await guest.keyboard.press('Tab');

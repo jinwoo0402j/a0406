@@ -75,7 +75,7 @@ test('클라이언트 접속·동기화·교환·게임 중 참가·최대 6명�
       assert.equal(a.snaps.get(k).b.find((x) => x.id === 'A').h, 'B', '두 화면 모두 A가 B에게 들려 있다');
       assert.deepEqual(a.snaps.get(k), b.snaps.get(k));
     }
-    b.send({ t: 'liftEnd' });
+    b.send({ t: 'endCast' });
     b.send(liftAim);
     const fail = await b.waitFor((m) => m.t === 'ev' && m.k === 'castFail');
     assert.match(fail.reason, /대기/);

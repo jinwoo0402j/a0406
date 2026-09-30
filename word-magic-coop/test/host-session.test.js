@@ -45,7 +45,7 @@ test('방장 + 원격 참가자: 시작·동기화·같은 검증·최대 6명·
     const aim = { mode: 'AIM', origin: B, dir: [A[0] - B[0], A[1] - B[1], A[2] - B[2]] };
     link.receive({ t: 'cast', ...aim });
     await sleep(80);
-    link.receive({ t: 'liftEnd' });
+    link.receive({ t: 'endCast' });
     link.receive({ t: 'cast', ...aim });
     await sleep(80);
     assert.ok(b.got.some((m) => m.k === 'liftStart' && m.by === 'B' && m.target === 'A'));

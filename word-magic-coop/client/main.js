@@ -15,6 +15,7 @@ const NAMES = { ...Object.fromEntries(SEAT_IDS.map((id) => [id, id])), rock: '�
 const BODY_DEF = new Map(bodyDefs().map((d) => [d.id, d]));
 const SEAT_COLOR = Object.fromEntries(LEVEL.seats.map((s) => [s.id, s.color]));
 const SENS = 0.0025;
+const END_CAST_KEY = '우클릭'; // 시전 종료 키 [임시] — 키 배정은 추후 결정
 
 const S = {
   conn: null, // 호스트 연결: WebSocket 래퍼, P2P 연결, 또는 이 탭의 HostSession
@@ -40,7 +41,7 @@ const S = {
   closingOnPurpose: false,
   editorKey: '',
   mode: 'AIM', // 대상 모드(F로 전환): 조준 대상 → 본인 → 주변
-  holding: false, // <들기> 버튼을 누르고 있는 중
+  holding: false, // 내가 유지 중인 지속형 마법(<들기>)이 있음 — 시전 종료로 끝낸다
   lastAim: '',
   projectiles: [],
   recent: [],
@@ -187,7 +188,7 @@ function updateWho() {
   $('who-chip').style.background = SEAT_COLOR[S.me];
   const other = S.me === 'A' ? 'B' : 'A';
   $('who-name').textContent = S.solo ? `플레이어 ${S.me} 조작 중 · Q로 ${other} 전환` : `플레이어 ${S.me} (나)`;
-  $('keys').textContent = `WASD 이동 · Space 점프 · 좌클릭 시전 · F 대상 모드 · E 줍기 · R 해제 · Tab 편집${S.solo ? ' · Q 캐릭터 전환' : ''}`;
+  $('keys').textContent = `WASD 이동 · Space 점프 · 좌클릭 시전 · ${END_CAST_KEY} 시전 종료 · F 대상 모드 · E 줍기 · R 해제 · Tab 편집${S.solo ? ' · Q 캐릭터 전환' : ''}`;
 }
 
 function switchCharacter() {
@@ -424,7 +425,8 @@ function onEvent(e) {
       log('허수아비가 다시 일어났어요');
       break;
     case 'castFail':
-      if (e.by === S.me) S.holding = false; // 들기 시전이 거절되면 누르고 있음 상태도 푼다
+      if (e.reason === REASON.SUSTAINING) { toast(`${e.reason} (${END_CAST_KEY})`); break; }
+      if (e.by === S.me) S.holding = false; // 들기 시전이 거절되면 유지 상태도 푼다
       toast(e.reason);
       break;
     case 'pickup':
@@ -502,10 +504,15 @@ function myEffect() {
   return ps?.e ? tokenWord(ps.e) : null;
 }
 
+function sustaining() {
+  return S.holding || !!mySnap()?.hold;
+}
+
 function cast() {
   const rig = currentRig();
   if (!rig) return;
-  if (myEffect() === 'LIFT') S.holding = true; // 버튼을 떼면 놓는다
+  if (sustaining()) { toast(`${REASON.SUSTAINING} (${END_CAST_KEY})`, 'info'); return; }
+  if (myEffect() === 'LIFT') S.holding = true; // 버튼을 떼도 유지, 시전 종료로 놓는다
   send({
     t: 'cast',
     mode: S.mode,
@@ -515,10 +522,12 @@ function cast() {
   });
 }
 
-function releaseLift() {
-  if (!S.holding) return;
+// 시전 종료: 내가 유지 중인 지속형 마법을 끝낸다(<들기>면 놓기).
+// 다른 사람이 건 마법에서 벗어나는 R(해제)과는 별개다.
+function endCast() {
+  if (!sustaining()) return;
   S.holding = false;
-  send({ t: 'liftEnd' });
+  send({ t: 'endCast' });
 }
 
 function cycleMode() {
@@ -539,7 +548,7 @@ function toggleEditor(open = !S.editorOpen) {
   S.editorOpen = open;
   $('editor').hidden = !open;
   if (open) {
-    releaseLift();
+    endCast();
     if (document.pointerLockElement) document.exitPointerLock();
     S.editorKey = '';
     renderEditor();
@@ -561,7 +570,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') { e.preventDefault(); sendInput(true); }
   if (e.code === 'KeyE') send({ t: 'pickup' });
   if (e.code === 'KeyR') send({ t: 'release' });
-  if (e.code === 'KeyQ') { releaseLift(); switchCharacter(); }
+  if (e.code === 'KeyQ') { endCast(); switchCharacter(); }
   if (e.code === 'KeyF') cycleMode();
 });
 window.addEventListener('keyup', (e) => S.keys.delete(e.code));
@@ -571,11 +580,12 @@ $('view').addEventListener('mousedown', (e) => {
   if (S.phase !== 'playing' || S.editorOpen) return;
   if (!S.locked) { requestLock(); return; }
   if (e.button === 0) cast();
+  if (e.button === 2) endCast(); // 시전 종료 [임시 키]
 });
-window.addEventListener('mouseup', (e) => { if (e.button === 0) releaseLift(); });
+$('view').addEventListener('contextmenu', (e) => e.preventDefault());
 document.addEventListener('pointerlockchange', () => {
   S.locked = document.pointerLockElement === $('view');
-  if (!S.locked) releaseLift();
+  if (!S.locked) endCast();
 });
 document.addEventListener('mousemove', (e) => {
   if (!S.locked || S.editorOpen) return; // 편집창을 열면 카메라 회전을 막는다
@@ -792,7 +802,7 @@ function updateHud(frame) {
   if (S.editorOpen) setNote('주문 편집 중 (시전·시점 회전 잠금)', '');
   else if (!pv) setNote('', '');
   else if (pv.kind === 'none' || pv.kind === 'mode') { setNote(pv.reason, 'bad'); ch.className = 'bad'; }
-  else if (pv.kind === 'holding') { setNote(`${nameOf(ps.hold)}을(를) 들고 있어요 · 시점을 돌려 옮기고, 버튼을 떼면 놓아요`, 'ok'); ch.className = 'ok'; }
+  else if (pv.kind === 'holding') { setNote(`${nameOf(ps.hold)}을(를) 들고 있어요 · 시점을 돌려 옮기고, ${END_CAST_KEY}으로 놓아요`, 'ok'); ch.className = 'ok'; }
   else if (pv.kind === 'fire') { setNote('조준한 곳으로 날아가요 · 실제로 맞은 대상에 적용돼요', ''); ch.className = 'fire'; }
   else if (pv.ok.size) {
     setNote(`${pv.kind === 'lift' ? '들 수 있어요' : '적용 대상'}: ${[...pv.ok].map(nameOf).join(', ')}`, 'ok');
@@ -957,7 +967,9 @@ window.__wm = {
   get solo() { return S.solo; },
   get mode() { return S.mode; },
   setMode(m) { S.mode = m; },
-  liftEnd: releaseLift,
+  endCast,
+  get locked() { return S.locked; },
+  liftEnd: endCast, // 이전 이름
   createRoom,
   joinByCode,
   get roomCode() { return $('room-code').textContent; },
