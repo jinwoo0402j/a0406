@@ -61,17 +61,17 @@ export function equip(g, pid, slot, token) {
   return g.handle(pid, { t: 'equip', slot, token });
 }
 
-// 토큰 6개가 모두 존재하고 각 토큰이 월드 또는 한 사람의 인벤토리 중 정확히 한 곳에만 있는지
-export function assertTokenInvariant(assert, g) {
-  assert.equal(g.tokens.length, 6);
+// 토큰이 모두 존재하고(2명이면 6개) 각 토큰이 월드 또는 한 사람의 인벤토리 중 정확히 한 곳에만 있는지
+export function assertTokenInvariant(assert, g, expected = 6) {
+  assert.equal(g.tokens.length, expected);
   const ids = new Set(g.tokens.map((t) => t.id));
-  assert.equal(ids.size, 6);
+  assert.equal(ids.size, expected);
   for (const t of g.tokens) {
     const inWorld = !!t.pos;
     const owned = !!t.owner;
     assert.ok(inWorld !== owned, `토큰 ${t.id}는 월드 또는 인벤토리 한 곳에만 있어야 한다`);
   }
-  for (const pid of ['A', 'B']) {
+  for (const pid of g.seats) {
     for (const slot of ['target', 'action']) {
       const id = g.players[pid].slots[slot];
       if (id) assert.equal(g.tokens.find((t) => t.id === id).owner, pid, '장착한 토큰은 본인 소유여야 한다');

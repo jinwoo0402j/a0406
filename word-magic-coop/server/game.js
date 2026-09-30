@@ -2,55 +2,116 @@
 // 자기 시전과 게스트 시전은 같은 handle() 경로로 같은 검증을 받는다.
 // 네트워크와 분리되어 있어 테스트에서 직접 구동할 수 있다.
 
-import { LEVEL } from '../shared/level.js';
+import { LEVEL, SEAT_IDS } from '../shared/level.js';
 import { TUNING } from '../shared/tuning.js';
 import { WORDS, SLOT, TRAIT } from '../shared/words.js';
 import { resolveSpell, REASON } from '../shared/targeting.js';
 import { boxOfBody, overlaps, pointInBox, dist, normalize, segmentBlocked } from '../shared/geom.js';
 import { Physics, bottomOf, clampExt } from './physics.js';
 
-export const PLAYER_IDS = ['A', 'B'];
-
 const r3 = (v) => Math.round(v * 1000) / 1000;
 
 export class Game {
-  constructor({ level = LEVEL, tuning = TUNING } = {}) {
+  // seats: 접속한 플레이어 자리(A~F 중). 게임 중에도 addPlayer/removePlayer로 바뀐다.
+  constructor({ level = LEVEL, tuning = TUNING, seats = ['A', 'B'] } = {}) {
     this.level = level;
     this.T = tuning;
     this.statics = level.statics;
     this.physics = new Physics(this.statics, tuning);
     this.events = [];
     this.round = 0;
-    this.reset();
+    this.seats = [];
+    this.reset(seats);
   }
 
-  // 위치·소유권·슬롯·효과·대기시간을 최초 상태로 되돌린다.
-  reset() {
+  // 위치·소유권·슬롯·효과·대기시간을 최초 상태로 되돌린다. seats를 주면 그 자리들로 새 판을 시작한다.
+  reset(seats = this.seats) {
+    this.events = [];
     this.time = 0;
     this.tick = 0;
     this.round += 1;
-    this.bodies = this.level.bodies.map((d) => this.makeBody(d));
-    this.tokens = this.level.tokens.map((d) => ({
+    this.seats = SEAT_IDS.filter((id) => seats.includes(id));
+    this.bodies = [
+      ...this.seats.map((pid) => this.makeBody(this.playerDef(pid))),
+      ...this.level.bodies.map((d) => this.makeBody(d)),
+    ];
+    this.tokens = this.level.tokens
+      .filter((d) => d.pos || this.seats.includes(d.seat))
+      .map((d) => this.makeToken(d, d.seat || null));
+    this.players = {};
+    for (const pid of this.seats) this.players[pid] = this.makePlayer(pid);
+    this.goal = { timer: 0, cleared: false, inside: {} };
+    this.history = [];
+    this.recordHistory();
+  }
+
+  playerDef(pid) {
+    const seat = this.level.seats.find((s) => s.id === pid);
+    return { id: pid, kind: 'player', pos: seat.spawn, size: this.level.playerSize };
+  }
+
+  makeToken(d, owner) {
+    return {
       id: d.id,
       word: d.word,
-      owner: d.owner || null,
-      pos: d.pos ? [...d.pos] : null,
+      owner,
+      pos: owner ? null : [...d.pos],
       vy: 0,
       lastSafe: d.pos ? { ground: this.groundUnder(d.pos), pos: [...d.pos] } : null,
       acquiredAt: 0,
-    }));
-    this.players = {};
-    for (const pid of PLAYER_IDS) {
-      this.players[pid] = {
-        id: pid,
-        slots: { ...(this.level.startSlots[pid] || { target: null, action: null }) },
-        cooldownUntil: 0,
-        releaseReadyAt: 0,
-      };
+    };
+  }
+
+  // 시작 슬롯: 그 자리의 시작 단어 중 본인이 가진 것을 분류별로 장착한다.
+  makePlayer(pid) {
+    const slots = { target: null, action: null };
+    for (const d of this.level.tokens) {
+      if (d.seat !== pid) continue;
+      const t = this.tokens.find((x) => x.id === d.id);
+      if (t && t.owner === pid) slots[WORDS[d.word].slot] = d.id;
     }
-    this.goal = { timer: 0, cleared: false, inside: { A: false, B: false, cargo: false } };
-    this.history = [];
-    this.recordHistory();
+    return { id: pid, slots, cooldownUntil: 0, releaseReadyAt: 0 };
+  }
+
+  // 게임 중 참가: 자리의 시작 위치 근처 빈 곳에 나타나고, 그 자리의 시작 단어를 받는다.
+  // 시작 단어가 월드에 떨어져 있으면 가져오고, 다른 사람이 가지고 있으면 그대로 둔다(토큰은 늘 하나뿐).
+  addPlayer(pid) {
+    if (this.players[pid] || !SEAT_IDS.includes(pid)) return false;
+    const b = this.makeBody(this.playerDef(pid));
+    this.bodies.unshift(b);
+    this.placeNear(b, this.playerDef(pid).pos);
+    for (const d of this.level.tokens) {
+      if (d.seat !== pid) continue;
+      const t = this.tokens.find((x) => x.id === d.id);
+      if (!t) this.tokens.push(this.makeToken(d, pid));
+      else if (!t.owner) { t.owner = pid; t.pos = null; t.vy = 0; }
+    }
+    this.players[pid] = this.makePlayer(pid);
+    this.seats = SEAT_IDS.filter((id) => this.players[id]);
+    this.emit({ k: 'join', id: pid });
+    return true;
+  }
+
+  // 게임 중 퇴장: 가지고 있던 단어는 그 자리에 떨어뜨린다(허공이면 안전 지점으로).
+  removePlayer(pid) {
+    const b = this.body(pid);
+    if (!b) return false;
+    const inv = this.inventory(pid);
+    inv.forEach((t, i) => {
+      const a = (i / Math.max(1, inv.length)) * Math.PI * 2;
+      const pos = [b.pos[0] + Math.cos(a) * 0.5, bottomOf(b) + 0.3, b.pos[2] + Math.sin(a) * 0.5];
+      const onGround = this.surfaceBelow(pos) !== null && bottomOf(b) > this.T.killY + 1;
+      t.owner = null;
+      t.vy = 0;
+      t.lastSafe = b.lastSafe ? { ground: b.lastSafe.ground, pos: [...b.lastSafe.pos] } : t.lastSafe;
+      t.pos = onGround ? pos : this.safePoint(b.lastSafe, [0, 0.3, 0], b.spawn);
+    });
+    this.bodies = this.bodies.filter((x) => x !== b);
+    for (const o of this.bodies) if (o.groundId === pid) { o.groundId = null; o.grounded = false; }
+    delete this.players[pid];
+    this.seats = SEAT_IDS.filter((id) => this.players[id]);
+    this.emit({ k: 'leave', id: pid, dropped: inv.map((t) => t.id) });
+    return true;
   }
 
   // 조준 판정용 위치 기록. 클라이언트는 보간 때문에 약간 과거를 보고 있으므로,
@@ -395,6 +456,13 @@ export class Game {
     b.grounded = false;
     b.groundId = null;
     b.groundStatic = null;
+    this.placeNear(b, base);
+    b.groundRefY = base[1];
+    this.emit({ k: 'recover', id: b.id });
+  }
+
+  // base(바닥 좌표) 근처에서 지형·다른 사물과 겹치지 않고 아래에 지면이 있는 자리에 둔다.
+  placeNear(b, base) {
     const offsets = [[0, 0]];
     for (const r of [1.2, 2.4, 3.6]) for (let i = 0; i < 8; i++) offsets.push([Math.cos((i / 8) * Math.PI * 2) * r, Math.sin((i / 8) * Math.PI * 2) * r]);
     for (const [ox, oz] of offsets) {
@@ -405,21 +473,18 @@ export class Game {
       const below = this.surfaceBelow([pos[0], pos[1] - b.half[1], pos[2]]);
       if (below === null || below < base[1] - 0.05) continue;
       b.pos = pos;
-      break;
+      return true;
     }
-    b.groundRefY = base[1];
-    this.emit({ k: 'recover', id: b.id });
+    return false;
   }
 
   stepGoal(dt) {
     const g = this.level.goal;
-    const inside = {
-      A: pointInBox(this.body('A').pos, g),
-      B: pointInBox(this.body('B').pos, g),
-      cargo: pointInBox(this.body('cargo').pos, g),
-    };
+    // 짐 + 접속한 모든 플레이어
+    const inside = { cargo: pointInBox(this.body('cargo').pos, g) };
+    for (const pid of this.seats) inside[pid] = pointInBox(this.body(pid).pos, g);
     this.goal.inside = inside;
-    if (inside.A && inside.B && inside.cargo) {
+    if (this.seats.length && Object.values(inside).every(Boolean)) {
       this.goal.timer += dt;
       if (!this.goal.cleared && this.goal.timer >= this.T.goalHoldTime) {
         this.goal.cleared = true;
@@ -446,7 +511,7 @@ export class Game {
         g: b.grounded ? 1 : 0,
       })),
       k: this.tokens.map((t) => ({ id: t.id, w: t.word, o: t.owner, p: t.pos ? t.pos.map(r3) : null })),
-      p: Object.fromEntries(PLAYER_IDS.map((pid) => [pid, {
+      p: Object.fromEntries(this.seats.map((pid) => [pid, {
         s: { ...this.players[pid].slots },
         cd: r3(Math.max(0, this.players[pid].cooldownUntil - this.time)),
         inv: this.inventory(pid).map((t) => t.id),

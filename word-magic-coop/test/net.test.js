@@ -27,7 +27,7 @@ function client(port) {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-test('두 클라이언트 접속·동기화·교환·연결 끊김 (T1)', async () => {
+test('클라이언트 접속·동기화·교환·게임 중 참가·최대 6명·연결 끊김 (T1)', async () => {
   const srv = await startServer({ port: 0, log: () => {} });
   try {
     const a = client(srv.port);
@@ -39,9 +39,11 @@ test('두 클라이언트 접속·동기화·교환·연결 끊김 (T1)', async 
     await a.waitFor((m) => m.t === 'start');
     await b.waitFor((m) => m.t === 'start');
 
-    // 세 번째 접속은 거절
+    // 세 번째 접속은 진행 중인 판에 C로 참가하고, 기존 사람들에게 참가 이벤트가 간다
     const c = client(srv.port);
-    await c.waitFor((m) => m.t === 'full');
+    assert.equal((await c.waitFor((m) => m.t === 'welcome')).you, 'C');
+    await c.waitFor((m) => m.t === 'start');
+    await a.waitFor((m) => m.t === 'ev' && m.k === 'join' && m.id === 'C');
 
     // A가 +x로 걷는다 → 두 클라이언트가 같은 틱에서 같은 위치를 받는다
     a.send({ t: 'input', wish: [1, 0] });
@@ -96,9 +98,24 @@ test('두 클라이언트 접속·동기화·교환·연결 끊김 (T1)', async 
       assert.ok(s.p.B.inv.includes('t2'));
     }
 
-    // B가 끊기면 A는 안내 후 로비로
+    // D·E·F까지 6명, 일곱 번째는 거절
+    const more = ['D', 'E', 'F'].map(() => client(srv.port));
+    for (const [i, cl] of more.entries()) assert.equal((await cl.waitFor((m) => m.t === 'welcome')).you, 'DEF'[i]);
+    const g = client(srv.port);
+    await g.waitFor((m) => m.t === 'full');
+    await sleep(150);
+    assert.deepEqual(Object.keys(a.latest().p), ['A', 'B', 'C', 'D', 'E', 'F']);
+
+    // B가 끊겨도 나머지는 계속한다(B가 가진 단어는 그 자리에 떨어짐)
     b.ws.close();
-    await a.waitFor((m) => m.t === 'peerLeft' && m.who === 'B');
+    await a.waitFor((m) => m.t === 'ev' && m.k === 'leave' && m.id === 'B');
+    await sleep(150);
+    assert.ok(!a.msgs.some((m) => m.t === 'peerLeft'));
+    assert.equal(a.latest().k.find((k) => k.id === 't2').o, null, 'B가 들고 있던 「민다」가 월드에 떨어졌다');
+
+    // 혼자 남으면 안내 후 로비로
+    for (const cl of [c, ...more]) cl.ws.close();
+    await a.waitFor((m) => m.t === 'peerLeft');
     const lobby = a.msgs.filter((m) => m.t === 'lobby').at(-1);
     assert.equal(lobby.state, 'lobby');
 
@@ -108,7 +125,7 @@ test('두 클라이언트 접속·동기화·교환·연결 끊김 (T1)', async 
     await b2.waitFor((m) => m.t === 'start');
     await sleep(150);
     assert.equal(b2.latest().p.A.s.action, 't2', '재시작: 슬롯이 최초 상태');
-    for (const cl of [a, b2, c]) cl.ws.close();
+    for (const cl of [a, b2, g]) cl.ws.close();
   } finally {
     await srv.close();
   }

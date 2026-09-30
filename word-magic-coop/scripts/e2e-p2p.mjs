@@ -52,15 +52,19 @@ const browser = await chromium.launch({
   args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--disable-features=WebRtcHideLocalIpsWithMdns'],
 });
 const errors = [];
+const opened = [];
 async function openPage(name, url) {
   const ctx = await browser.newContext({ viewport: { width: 1100, height: 640 } });
   const p = await ctx.newPage();
   p.on('pageerror', (e) => errors.push(`${name}: ${e.message}`));
   if (process.env.E2E_VERBOSE) p.on('console', (m) => console.log(`[${name}] ${m.text()}`));
+  // 이 환경은 외부 글꼴 서버에 닿지 못한다: 기다리지 않고 바로 실패시킨다
+  await p.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.abort());
   // CDN 대신 로컬 파일(이 환경은 CDN에 닿지 못한다)
   await p.route('https://cdn.jsdelivr.net/npm/three@*/build/*', (r) => r.fulfill({ contentType: 'text/javascript', body: fs.readFileSync(path.join(ROOT, 'node_modules/three/build', path.basename(new URL(r.request().url()).pathname))) }));
   await p.route('https://cdn.jsdelivr.net/npm/peerjs@*/dist/peerjs.min.js', (r) => r.fulfill({ contentType: 'text/javascript', body: fs.readFileSync(peerjsFile) }));
   await p.goto(url);
+  opened.push({ name, p });
   return p;
 }
 const bodyOf = (p, id) => p.evaluate((i) => window.__wm.latest?.b.find((x) => x.id === i), id);
@@ -107,12 +111,20 @@ try {
   const t4 = await host.evaluate(() => window.__wm.latest.k.find((k) => k.id === 't4'));
   check('친구가 내려놓은 「띄운다」가 방장 화면의 월드에 있음', !t4.o && !!t4.p);
 
-  // 6) 세 번째 사람은 거절
+  // 6) 세 번째 사람은 진행 중인 판에 C로 참가 → 모두의 화면에 보이고, 나가도 게임은 계속
   const third = await openPage('세번째', link);
-  await third.waitForFunction(() => /이미 두 명/.test(document.getElementById('lobby-status').textContent), null, { timeout: 35000 }).catch(() => {});
-  const thirdMsg = await third.evaluate(() => document.getElementById('lobby-status').textContent + ' / ' + document.getElementById('lobby-note').textContent);
-  check('세 번째 접속은 거절', /이미 두 명/.test(thirdMsg), thirdMsg);
+  await third.waitForFunction(() => window.__wm.phase === 'playing' && window.__wm.latest, null, { timeout: 40000 }).catch(() => {});
+  const thirdMe = await third.evaluate(() => window.__wm.me);
+  await sleep(600);
+  const cOnHost = await bodyOf(host, 'C');
+  const cOnGuest = await bodyOf(guest, 'C');
+  const aOnThird = await bodyOf(third, 'A');
+  check('세 번째 사람이 C로 참가해 모두의 화면에 보임', thirdMe === 'C' && !!cOnHost && !!cOnGuest && !!aOnThird, `me=${thirdMe}`);
+  await third.screenshot({ path: `${OUT}/p2p-2b-third-view.png` });
   await third.context().close();
+  await host.waitForFunction(() => !window.__wm.latest.b.some((b) => b.id === 'C'), null, { timeout: 20000 }).catch(() => {});
+  const stillPlaying = await host.evaluate(() => window.__wm.phase === 'playing' && !window.__wm.latest.b.some((b) => b.id === 'C'));
+  check('C가 나가도 방장·친구는 계속 플레이', stillPlaying);
 
   // 7) 친구가 나가면 방장은 로비로(방은 유지), 같은 링크로 새 친구가 들어오면 처음부터
   await guest.context().close();
@@ -137,6 +149,14 @@ try {
   check('페이지 스크립트 오류 없음', errors.length === 0, errors.join(' | '));
 } catch (e) {
   check('P2P E2E 실행', false, e.message.split('\n')[0]);
+  for (const { name, p } of opened) {
+    const st = await p.evaluate(() => ({
+      phase: window.__wm?.phase, me: window.__wm?.me,
+      status: document.getElementById('lobby-status')?.textContent,
+      note: document.getElementById('lobby-note')?.textContent,
+    })).catch((err) => `닫힘/오류: ${err.message.split('\n')[0]}`);
+    console.log(`  [진단] ${name}:`, JSON.stringify(st));
+  }
 } finally {
   await browser.close();
   web.close();

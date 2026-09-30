@@ -15,7 +15,7 @@ const body = html
 
 const out = `<title>단어로 만드는 마법</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&display=swap" media="print" onload="this.media='all'">
 <style>
 ${css}
 </style>

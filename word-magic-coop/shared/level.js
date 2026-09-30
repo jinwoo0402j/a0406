@@ -24,31 +24,44 @@ export const LEVEL = {
     box('ledge-disc', [-1.2, 0, 21.5], [1.2, 0.5, 22.3], '#d8c3f0'),
   ],
 
+  // 플레이어 자리(최대 6명). 접속한 자리만 캐릭터가 생긴다. spawn은 바닥 중심 좌표.
+  seats: [
+    { id: 'A', spawn: [-1.5, 0, 1], color: '#ff7f73' },
+    { id: 'B', spawn: [1.5, 0, 1], color: '#5fa8ff' },
+    { id: 'C', spawn: [-4.5, 0, 1], color: '#4fc27f' },
+    { id: 'D', spawn: [4.5, 0, 1], color: '#f2b632' },
+    { id: 'E', spawn: [-3, 0, -0.6], color: '#b48cff' },
+    { id: 'F', spawn: [3, 0, -0.6], color: '#34c3bd' },
+  ],
+  playerSize: [0.7, 1.3, 0.7],
+
   // 이동 사물. pos는 바닥 중심 좌표. size는 AABB 한 변(가로·세로·깊이)의 길이.
   bodies: [
-    { id: 'A', kind: 'player', pos: [-1.5, 0, 1], size: [0.7, 1.3, 0.7] },
-    { id: 'B', kind: 'player', pos: [1.5, 0, 1], size: [0.7, 1.3, 0.7] },
     { id: 'rock', kind: 'rock', pos: [-3, 0, 6], size: [0.7, 0.7, 0.7] },
     { id: 'box1', kind: 'box', pos: [3, 0, 6], size: [0.9, 0.9, 0.9] },
     { id: 'box2', kind: 'box', pos: [2.4, 0, 18.4], size: [0.9, 0.9, 0.9] },
     { id: 'cargo', kind: 'cargo', pos: [0, 0, 26], size: [1, 1, 1] },
   ],
 
-  // 단어 토큰 6개. owner가 있으면 그 플레이어의 인벤토리에서 시작한다.
+  // 단어 토큰. seat가 있으면 그 자리 플레이어의 인벤토리에서 시작하고(접속한 자리만 생긴다),
+  // pos가 있으면 월드에 놓여 있다. 2명이면 토큰 6개, 6명이면 14개.
+  // 시작 문장: A·C·E는 「대상을 민다」, B·D·F는 「대상을 띄운다」.
   tokens: [
-    { id: 't1', word: 'AIMED', owner: 'A' },
-    { id: 't2', word: 'PUSH', owner: 'A' },
-    { id: 't3', word: 'AIMED', owner: 'B' },
-    { id: 't4', word: 'LIFT', owner: 'B' },
+    { id: 't1', word: 'AIMED', seat: 'A' },
+    { id: 't2', word: 'PUSH', seat: 'A' },
+    { id: 't3', word: 'AIMED', seat: 'B' },
+    { id: 't4', word: 'LIFT', seat: 'B' },
     { id: 't5', word: 'SELF', pos: [-5, 0, 17] },
     { id: 't6', word: 'NEARBY', pos: [5, 0, 17.5] },
+    { id: 't7', word: 'AIMED', seat: 'C' },
+    { id: 't8', word: 'PUSH', seat: 'C' },
+    { id: 't9', word: 'AIMED', seat: 'D' },
+    { id: 't10', word: 'LIFT', seat: 'D' },
+    { id: 't11', word: 'AIMED', seat: 'E' },
+    { id: 't12', word: 'PUSH', seat: 'E' },
+    { id: 't13', word: 'AIMED', seat: 'F' },
+    { id: 't14', word: 'LIFT', seat: 'F' },
   ],
-
-  // 시작 슬롯 배치
-  startSlots: {
-    A: { target: 't1', action: 't2' },
-    B: { target: 't3', action: 't4' },
-  },
 
   // 안전 위치. 마지막으로 서 있던 지면 조각(ground)과 같은 조각의 가장 가까운 지점으로 복구한다.
   respawns: [
@@ -70,3 +83,14 @@ export const LEVEL = {
     { text: '도착 구역 ▲', pos: [0, 0.8, 28.97], yaw: Math.PI },
   ],
 };
+
+export const SEAT_IDS = LEVEL.seats.map((s) => s.id);
+export const MAX_PLAYERS = SEAT_IDS.length;
+
+// 캐릭터 + 이동 사물의 정의(렌더링·미리보기용). 캐릭터는 자리 수만큼.
+export function bodyDefs(level = LEVEL) {
+  return [
+    ...level.seats.map((s) => ({ id: s.id, kind: 'player', pos: s.spawn, size: level.playerSize, color: s.color })),
+    ...level.bodies,
+  ];
+}
