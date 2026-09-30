@@ -56,28 +56,38 @@ test('클라이언트 접속·동기화·교환·게임 중 참가·최대 6명�
     const aPos = a.latest().b.find((x) => x.id === 'A').p;
     assert.ok(aPos[0] > -0.5, `A가 이동했다: ${aPos}`);
 
-    // A가 B에게 「대상을 민다」 → 두 클라이언트 모두 시전 이벤트를 받는다
+    // A가 조준 대상 모드로 B에게 <밀치기> → 두 클라이언트 모두 시전 이벤트를 받는다
     const bPos = b.latest().b.find((x) => x.id === 'B').p;
-    a.send({ t: 'cast', origin: aPos, dir: [bPos[0] - aPos[0], bPos[1] - aPos[1], bPos[2] - aPos[2]] });
+    a.send({ t: 'cast', mode: 'AIM', origin: aPos, dir: [bPos[0] - aPos[0], bPos[1] - aPos[1], bPos[2] - aPos[2]] });
     const ea = await a.waitFor((m) => m.t === 'ev' && m.k === 'cast');
     const eb = await b.waitFor((m) => m.t === 'ev' && m.k === 'cast');
     assert.deepEqual(ea, eb);
     assert.deepEqual(ea.targets, ['B']);
 
-    // 게스트(B)의 요청도 같은 검증: 쿨다운 없이 연속 요청하면 두 번째는 거절(본인에게만 안내)
-    b.send({ t: 'cast', origin: bPos, dir: [aPos[0] - bPos[0], 0, aPos[2] - bPos[2]] });
-    b.send({ t: 'cast', origin: bPos, dir: [aPos[0] - bPos[0], 0, aPos[2] - bPos[2]] });
+    // 게스트(B)의 요청도 같은 검증: <들기>로 A를 들면 두 화면 모두 들린 상태를 보고,
+    // 놓은 직후 다시 시전하면 대기시간으로 거절(본인에게만 안내)
+    const liftAim = { t: 'cast', mode: 'AIM', origin: bPos, dir: [aPos[0] - bPos[0], aPos[1] - bPos[1], aPos[2] - bPos[2]] };
+    b.send(liftAim);
+    await a.waitFor((m) => m.t === 'ev' && m.k === 'liftStart' && m.by === 'B');
+    await sleep(200);
+    const common2 = [...a.snaps.keys()].filter((k) => b.snaps.has(k)).slice(-3);
+    for (const k of common2) {
+      assert.equal(a.snaps.get(k).b.find((x) => x.id === 'A').h, 'B', '두 화면 모두 A가 B에게 들려 있다');
+      assert.deepEqual(a.snaps.get(k), b.snaps.get(k));
+    }
+    b.send({ t: 'liftEnd' });
+    b.send(liftAim);
     const fail = await b.waitFor((m) => m.t === 'ev' && m.k === 'castFail');
     assert.match(fail.reason, /대기/);
     await sleep(100);
     assert.ok(!a.msgs.some((m) => m.k === 'castFail'), '실패 안내는 시전자에게만');
 
-    // 교환: A가 「민다」를 내려놓고 B가 줍는다 → 두 화면 모두 소유권이 바뀐다
-    a.send({ t: 'drop', token: 't2' });
+    // 교환: A가 <밀치기>를 내려놓고 B가 줍는다 → 두 화면 모두 소유권이 바뀐다
+    a.send({ t: 'drop', token: 't1' });
     await b.waitFor((m) => m.t === 'ev' && m.k === 'drop');
     await sleep(200);
     // B를 A 근처로 이동시키기 위해 걷기
-    const t2 = b.latest().k.find((k) => k.id === 't2').p;
+    const t2 = b.latest().k.find((k) => k.id === 't1').p;
     for (let i = 0; i < 60; i++) {
       const bp = b.latest().b.find((x) => x.id === 'B').p;
       const dx = t2[0] - bp[0];
@@ -89,13 +99,13 @@ test('클라이언트 접속·동기화·교환·게임 중 참가·최대 6명�
     }
     b.send({ t: 'input', wish: [0, 0] });
     b.send({ t: 'pickup' });
-    await b.waitFor((m) => m.t === 'ev' && m.k === 'pickup' && m.token === 't2');
+    await b.waitFor((m) => m.t === 'ev' && m.k === 'pickup' && m.token === 't1');
     await sleep(150);
     for (const cl of [a, b]) {
       const s = cl.latest();
-      assert.equal(s.k.find((k) => k.id === 't2').o, 'B');
-      assert.equal(s.p.A.s.action, null, 'A의 작용 슬롯이 비었다');
-      assert.ok(s.p.B.inv.includes('t2'));
+      assert.equal(s.k.find((k) => k.id === 't1').o, 'B');
+      assert.equal(s.p.A.e, null, 'A의 효과 칸이 비었다');
+      assert.ok(s.p.B.inv.includes('t1'));
     }
 
     // D·E·F까지 6명, 일곱 번째는 거절
@@ -111,7 +121,7 @@ test('클라이언트 접속·동기화·교환·게임 중 참가·최대 6명�
     await a.waitFor((m) => m.t === 'ev' && m.k === 'leave' && m.id === 'B');
     await sleep(150);
     assert.ok(!a.msgs.some((m) => m.t === 'peerLeft'));
-    assert.equal(a.latest().k.find((k) => k.id === 't2').o, null, 'B가 들고 있던 「민다」가 월드에 떨어졌다');
+    assert.equal(a.latest().k.find((k) => k.id === 't1').o, null, 'B가 가지고 있던 <밀치기>가 월드에 떨어졌다');
 
     // 혼자 남으면 안내 후 로비로
     for (const cl of [c, ...more]) cl.ws.close();
@@ -124,7 +134,7 @@ test('클라이언트 접속·동기화·교환·게임 중 참가·최대 6명�
     assert.equal((await b2.waitFor((m) => m.t === 'welcome')).you, 'B');
     await b2.waitFor((m) => m.t === 'start');
     await sleep(150);
-    assert.equal(b2.latest().p.A.s.action, 't2', '재시작: 슬롯이 최초 상태');
+    assert.equal(b2.latest().p.A.e, 't1', '재시작: 장착이 최초 상태');
     for (const cl of [a, b2, g]) cl.ws.close();
   } finally {
     await srv.close();

@@ -4,8 +4,10 @@ import { LEVEL, bodyDefs } from '../shared/level.js';
 import { WORDS } from '../shared/words.js';
 import { makeLabel } from './labels.js';
 
-const ACTION_COLOR = { PUSH: '#ff9a4d', LIFT: '#4fd6ff' };
-const SLOT_COLOR = { target: '#9b7bff', action: '#ff9a4d' };
+const ACTION_COLOR = { PUSH: '#ff9a4d', LIFT: '#4fd6ff', FIREBALL: '#ff5a2a' };
+const KIND_COLOR = { effect: '#ff9a4d', mod: '#9b7bff' }; // 효과 단어 / 수식 단어
+const SCORCH = new THREE.Color('#3a2a22');
+const now = () => performance.now() / 1000;
 
 function checkerTexture(a, b) {
   const c = document.createElement('canvas');
@@ -63,6 +65,8 @@ export class Renderer {
 
     this.bodyViews = new Map();
     this.tokenViews = new Map();
+    this.projViews = new Map();
+    this.tethers = new Map();
     this.fx = [];
     this.buildStatics();
     this.buildBodies();
@@ -146,6 +150,7 @@ export class Renderer {
         const m = new THREE.MeshStandardMaterial({ color, roughness: 0.6, ...extra });
         m.userData.baseEmissive = m.emissive.clone();
         m.userData.baseIntensity = m.emissiveIntensity;
+        m.userData.baseColor = m.color.clone();
         mats.push(m);
         return m;
       };
@@ -196,6 +201,44 @@ export class Renderer {
         visual = new THREE.Mesh(new THREE.BoxGeometry(...d.size), std('#d19a5f'));
         const edge = new THREE.LineSegments(new THREE.EdgesGeometry(visual.geometry), new THREE.LineBasicMaterial({ color: '#8a5a2b' }));
         visual.add(edge);
+      } else if (d.kind === 'heavy') {
+        // 무거운 상자: <세게> 없이는 들 수 없다
+        visual = new THREE.Mesh(new THREE.BoxGeometry(...d.size), std('#6d7486', { metalness: 0.3, roughness: 0.5 }));
+        const edge = new THREE.LineSegments(new THREE.EdgesGeometry(visual.geometry), new THREE.LineBasicMaterial({ color: '#2f3440' }));
+        visual.add(edge);
+        const tag = makeLabel('무거운 상자', { bg: '#4a5063', size: 36, height: 0.26 });
+        tag.position.y = h / 2 + 0.35;
+        group.add(tag);
+      } else if (d.kind === 'dummy') {
+        // 시험용 적(허수아비): 체력 막대
+        visual = new THREE.Group();
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, h, 8), std('#8a5a2b'));
+        const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.32, 0.7, 12), std('#e2c275'));
+        torso.position.y = 0.05;
+        const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), std('#f0d58a'));
+        head.position.y = 0.6;
+        const arms = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.1, 8), std('#8a5a2b'));
+        arms.rotation.z = Math.PI / 2;
+        arms.position.y = 0.25;
+        const eyeMat = new THREE.MeshBasicMaterial({ color: '#2f2a3d' });
+        for (const x of [-0.08, 0.08]) {
+          const e = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.02, 0.02), eyeMat);
+          e.position.set(x, 0.63, 0.21);
+          e.rotation.z = x > 0 ? 0.6 : -0.6;
+          visual.add(e);
+        }
+        visual.add(pole, torso, head, arms);
+        const bar = new THREE.Group();
+        const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.12), new THREE.MeshBasicMaterial({ color: '#2f2a3d', transparent: true, opacity: 0.7, depthWrite: false }));
+        const fill = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.08), new THREE.MeshBasicMaterial({ color: '#ff5a5a', depthWrite: false }));
+        fill.position.z = 0.001;
+        bar.add(bg, fill);
+        bar.position.y = h / 2 + 0.3;
+        group.add(bar);
+        group.userData.hpBar = { bar, fill };
+        const tag = makeLabel('허수아비', { bg: '#b0883a', size: 36, height: 0.26 });
+        tag.position.y = h / 2 + 0.6;
+        group.add(tag);
       } else {
         // 목표 짐: 표식이 있는 금색 상자
         visual = new THREE.Mesh(new THREE.BoxGeometry(...d.size), std('#ffcf4a'));
@@ -212,7 +255,7 @@ export class Renderer {
       visual.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
       group.add(visual);
 
-      // 부양 표시 고리
+      // 들려 있음 표시 고리
       const ring = new THREE.Mesh(
         new THREE.TorusGeometry(Math.max(d.size[0], d.size[2]) * 0.7, 0.045, 8, 32),
         new THREE.MeshBasicMaterial({ color: ACTION_COLOR.LIFT, transparent: true, opacity: 0.85 }),
@@ -234,7 +277,7 @@ export class Renderer {
       }
 
       this.scene.add(group);
-      this.bodyViews.set(d.id, { group, visual, mats, ring, shield, def: d, highlight: null });
+      this.bodyViews.set(d.id, { group, visual, mats, ring, shield, def: d, baseScale: visual.scale.clone(), anim: null, smokeAt: 0 });
     }
   }
 
@@ -260,19 +303,19 @@ export class Renderer {
     if (v) return v;
     const w = WORDS[word];
     const group = new THREE.Group();
-    const label = makeLabel(w.label, { bg: SLOT_COLOR[w.slot], size: 56, height: 0.46, border: '#ffffff' });
+    const label = makeLabel(w.label, { bg: KIND_COLOR[w.kind], size: 56, height: 0.46, border: '#ffffff' });
     label.position.y = 0.75;
     group.add(label);
     const glow = new THREE.Mesh(
       new THREE.CircleGeometry(0.45, 32),
-      new THREE.MeshBasicMaterial({ color: SLOT_COLOR[w.slot], transparent: true, opacity: 0.45, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: KIND_COLOR[w.kind], transparent: true, opacity: 0.45, depthWrite: false }),
     );
     glow.rotation.x = -Math.PI / 2;
     glow.position.y = 0.02;
     group.add(glow);
     const gem = new THREE.Mesh(
       new THREE.OctahedronGeometry(0.14),
-      new THREE.MeshStandardMaterial({ color: SLOT_COLOR[w.slot], emissive: SLOT_COLOR[w.slot], emissiveIntensity: 0.5 }),
+      new THREE.MeshStandardMaterial({ color: KIND_COLOR[w.kind], emissive: KIND_COLOR[w.kind], emissiveIntensity: 0.5 }),
     );
     gem.position.y = 0.3;
     group.add(gem);
@@ -282,12 +325,34 @@ export class Renderer {
     return v;
   }
 
-  // 시전 효과: 시전자 → 대상 빛줄기 + 대상 반짝임, 범위 주문은 퍼지는 고리
+  // 캐릭터 형태 과장: 시전하면 쭉 늘어나고, 맞으면 납작해졌다 튀어 오른다
+  poke(id, type) {
+    const v = this.bodyViews.get(id);
+    if (v) v.anim = { type, t0: now() };
+  }
+
+  burst(pos, color, n, speed, up, life = 0.55, size = 0.07) {
+    for (let i = 0; i < n; i++) {
+      const p = new THREE.Mesh(new THREE.SphereGeometry(size, 6, 4), new THREE.MeshBasicMaterial({ color, transparent: true }));
+      p.position.set(...pos);
+      const ang = (i / n) * Math.PI * 2 + Math.random() * 0.3;
+      const vel = new THREE.Vector3(Math.cos(ang) * speed, up + Math.random() * up, Math.sin(ang) * speed);
+      this.scene.add(p);
+      this.fx.push({ obj: p, life, age: 0, kind: 'particle', vel });
+    }
+  }
+
+  // 시전 효과: 밀치기는 빛줄기·튀는 입자, 주변 모드는 퍼지는 고리, 파이어볼은 손끝 불꽃
   castFx(ev, positions) {
-    const color = new THREE.Color(ACTION_COLOR[ev.action] || '#ffffff');
+    const color = new THREE.Color(ACTION_COLOR[ev.effect] || '#ffffff');
+    this.poke(ev.by, 'cast');
     const from = positions.get(ev.by);
     if (!from) return;
-    if (ev.target === 'NEARBY') {
+    if (ev.effect === 'FIREBALL') {
+      this.burst([from[0], from[1] + 0.3, from[2]], color, 8, 1.2, 0.8, 0.3, 0.06);
+      return;
+    }
+    if (ev.mode === 'NEAR') {
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(0.8, 1.0, 48),
         new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }),
@@ -297,33 +362,42 @@ export class Renderer {
       this.scene.add(ring);
       this.fx.push({ obj: ring, life: 0.45, age: 0, kind: 'ring' });
     }
-    for (const id of ev.targets) {
+    for (const id of ev.targets || []) {
       const to = positions.get(id);
       if (!to) continue;
       if (id !== ev.by) {
         const a = new THREE.Vector3(from[0], from[1] + 0.3, from[2]);
         const b = new THREE.Vector3(...to);
-        const len = a.distanceTo(b);
         const beam = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.05, 0.05, len, 6),
+          new THREE.CylinderGeometry(0.05, 0.05, a.distanceTo(b), 6),
           new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthWrite: false }),
         );
         beam.position.copy(a).add(b).multiplyScalar(0.5);
         beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
         this.scene.add(beam);
         this.fx.push({ obj: beam, life: 0.3, age: 0, kind: 'fade' });
+        this.poke(id, 'hit');
       }
-      for (let i = 0; i < 10; i++) {
-        const p = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 4), new THREE.MeshBasicMaterial({ color, transparent: true }));
-        p.position.set(...to);
-        const ang = (i / 10) * Math.PI * 2;
-        const vel = ev.action === 'LIFT'
-          ? new THREE.Vector3(Math.cos(ang) * 0.8, 2 + Math.random(), Math.sin(ang) * 0.8)
-          : new THREE.Vector3(Math.cos(ang) * 2.2, 0.6 + Math.random() * 0.6, Math.sin(ang) * 2.2);
-        this.scene.add(p);
-        this.fx.push({ obj: p, life: 0.55, age: 0, kind: 'particle', vel });
-      }
+      this.burst(to, color, 10, 2.2, 0.6);
     }
+  }
+
+  // 파이어볼 명중 폭발(반경 = 실제 판정 반경)
+  boomFx(e) {
+    const ball = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 20, 14),
+      new THREE.MeshBasicMaterial({ color: '#ff7a2a', transparent: true, opacity: 0.6, depthWrite: false }),
+    );
+    ball.position.set(...e.pos);
+    ball.userData.maxScale = e.blast;
+    this.scene.add(ball);
+    this.fx.push({ obj: ball, life: 0.4, age: 0, kind: 'boom' });
+    this.burst(e.pos, new THREE.Color('#ffb347'), 16, 3, 1.5, 0.6, 0.08);
+    for (const h of e.hits) this.poke(h.id, 'hit');
+  }
+
+  fizzleFx(pos) {
+    this.burst(pos, new THREE.Color('#9a9aa8'), 6, 0.6, 0.6, 0.4, 0.06);
   }
 
   releaseFx(pos) {
@@ -351,6 +425,10 @@ export class Renderer {
         const s = 1 + k * 3;
         f.obj.scale.set(s, s, s);
         f.obj.material.opacity = 0.8 * (1 - k);
+      } else if (f.kind === 'boom') {
+        const sc = 0.2 + (f.obj.userData.maxScale - 0.2) * Math.min(1, k * 1.8);
+        f.obj.scale.set(sc, sc, sc);
+        f.obj.material.opacity = 0.6 * (1 - k);
       } else if (f.kind === 'particle') {
         f.obj.position.addScaledVector(f.vel, dt);
         f.vel.y -= 3 * dt;
@@ -370,10 +448,39 @@ export class Renderer {
       if (!s) continue;
       v.group.position.set(s.p[0], s.p[1], s.p[2]);
       v.visual.rotation.y = s.y || 0;
-      v.ring.visible = s.f > 0;
-      if (v.ring.visible) {
-        v.ring.rotation.z = t * 3;
-        v.ring.material.opacity = s.f < 0.6 ? 0.4 + 0.4 * Math.abs(Math.sin(t * 16)) : 0.85;
+      // 들려 있으면 고리 표시
+      v.ring.visible = !!s.h;
+      if (v.ring.visible) v.ring.rotation.z = t * 3;
+      // 형태 과장(늘어남·납작해짐) + 들려 있는 동안 흔들림
+      let sy = 1;
+      let sxz = 1;
+      if (v.anim) {
+        const e = now() - v.anim.t0;
+        const dur = v.anim.type === 'cast' ? 0.35 : 0.45;
+        if (e > dur) v.anim = null;
+        else if (v.anim.type === 'cast') { const w = Math.sin((Math.PI * e) / dur); sy = 1 + 0.4 * w; sxz = 1 - 0.2 * w; }
+        else { const w = Math.sin((Math.PI * e) / dur) * (1 - e / dur); sy = 1 - 0.45 * w; sxz = 1 + 0.3 * w; }
+      }
+      if (s.h) { sy *= 1 + 0.08 * Math.sin(t * 14); sxz *= 1 - 0.04 * Math.sin(t * 14); }
+      v.visual.scale.set(v.baseScale.x * sxz, v.baseScale.y * sy, v.baseScale.z * sxz);
+      // 그을림(아군 디버프): 색이 어두워지고 연기가 난다
+      const scorched = s.d > 0;
+      for (const m of v.mats) {
+        if (scorched) m.color.copy(m.userData.baseColor).lerp(SCORCH, 0.55);
+        else m.color.copy(m.userData.baseColor);
+      }
+      if (scorched && t - v.smokeAt > 0.15) {
+        v.smokeAt = t;
+        this.burst([s.p[0], s.p[1] + v.def.size[1] / 2, s.p[2]], new THREE.Color('#5a5560'), 1, 0.3, 0.8, 0.7, 0.09);
+      }
+      // 허수아비 체력 막대·쓰러짐
+      const hpBar = v.group.userData.hpBar;
+      if (hpBar) {
+        const k = Math.max(0, (s.hp ?? 100) / 100);
+        hpBar.fill.scale.x = Math.max(0.001, k);
+        hpBar.fill.position.x = -0.43 * (1 - k);
+        hpBar.bar.quaternion.copy(this.camera.quaternion);
+        v.visual.rotation.x = s.dn ? -Math.PI / 2.2 : 0;
       }
       if (v.shield) {
         v.shield.visible = s.i > 0;
@@ -410,13 +517,64 @@ export class Renderer {
     }
     for (const [id, v] of this.tokenViews) if (!seen.has(id)) v.group.visible = false;
 
-    // 범위 표시
+    // 범위 표시(주변 모드, <큰>으로 커진 반경)
     const me = frame.bodies.get(frame.me);
     this.nearbyRing.visible = !!(frame.nearby && me);
     if (this.nearbyRing.visible) {
       const def = this.bodyViews.get(frame.me).def;
       this.nearbyRing.position.set(me.p[0], me.p[1] - def.size[1] / 2 + 0.04, me.p[2]);
+      this.nearbyRing.scale.set(frame.nearby / 3, frame.nearby / 3, 1);
     }
+
+    // 파이어볼 투사체: 실제 판정 반지름 크기 + 꼬리
+    const live = new Set();
+    for (const pr of frame.projectiles || []) {
+      live.add(pr.id);
+      let pv = this.projViews.get(pr.id);
+      if (!pv) {
+        const core = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), new THREE.MeshBasicMaterial({ color: '#ffd27a' }));
+        const halo = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), new THREE.MeshBasicMaterial({ color: '#ff5a2a', transparent: true, opacity: 0.35, depthWrite: false }));
+        this.scene.add(core, halo);
+        pv = { core, halo, trailAt: 0 };
+        this.projViews.set(pr.id, pv);
+      }
+      pv.core.position.set(...pr.p);
+      pv.halo.position.set(...pr.p);
+      pv.core.scale.setScalar(pr.r);
+      pv.halo.scale.setScalar(pr.r * (1.7 + 0.2 * Math.sin(t * 30)));
+      if (t - pv.trailAt > 0.03) {
+        pv.trailAt = t;
+        this.burst(pr.p, new THREE.Color('#ff8a3d'), 1, 0.2, 0.2, 0.3, pr.r * 0.5);
+      }
+    }
+    for (const [id, pv] of this.projViews) {
+      if (live.has(id)) continue;
+      this.scene.remove(pv.core, pv.halo);
+      this.projViews.delete(id);
+    }
+
+    // 들기 연결선: 드는 사람 손 → 들린 대상
+    const held = new Set();
+    for (const [id, s] of frame.bodies) {
+      if (!s.h) continue;
+      const from = frame.bodies.get(s.h);
+      if (!from) continue;
+      held.add(id);
+      let tv = this.tethers.get(id);
+      if (!tv) {
+        tv = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1, 6), new THREE.MeshBasicMaterial({ color: '#4fd6ff', transparent: true, opacity: 0.65, depthWrite: false }));
+        this.scene.add(tv);
+        this.tethers.set(id, tv);
+      }
+      const a = new THREE.Vector3(from.p[0], from.p[1] + 0.3, from.p[2]);
+      const b = new THREE.Vector3(...s.p);
+      tv.visible = true;
+      tv.scale.set(1, Math.max(0.01, a.distanceTo(b)), 1);
+      tv.position.copy(a).add(b).multiplyScalar(0.5);
+      tv.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+      tv.material.opacity = 0.45 + 0.2 * Math.sin(t * 12);
+    }
+    for (const [id, tv] of this.tethers) if (!held.has(id)) tv.visible = false;
 
     this.flag.rotation.y = Math.sin(t * 2) * 0.25;
     this.goalPad.material.opacity = frame.cleared ? 0.75 : 0.35 + 0.1 * Math.sin(t * 3);

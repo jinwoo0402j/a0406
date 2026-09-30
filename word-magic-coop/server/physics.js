@@ -2,7 +2,8 @@
 // - 입력 이동(inVel)과 외부(마법) 이동(ext)을 따로 보관하고 합산한다. 입력이 마법 이동을 덮어쓰지 않는다.
 // - 축별 이동(X → Z → Y)으로 충돌을 해결한다. 이미 겹친 물체끼리는 서로 빠져나갈 수 있게 무시한다.
 // - 아래에 있는 물체부터 움직이고, 위에 올라탄 물체는 받치는 물체의 이동을 따라간다(물체 위에 서기).
-// - 부양 중인 물체가 올라가면 위에 얹힌 물체를 함께 밀어 올린다.
+// - 들린 물체(b.hold)는 중력 대신 목표 지점을 향한 스프링·감쇠로 움직인다(관성·넘침이 생긴다).
+//   들린 물체가 올라가면 위에 얹힌 물체를 함께 밀어 올린다.
 
 import { boxOfBody, overlaps, overlapsOnAxes, EPS } from '../shared/geom.js';
 
@@ -99,10 +100,11 @@ export class Physics {
     for (const b of bodies) {
       if (b.kind === 'player') {
         const accel = b.grounded ? T.groundAccel : T.airAccel;
-        const target = [b.wish[0] * T.walkSpeed, b.wish[1] * T.walkSpeed];
+        const speed = T.walkSpeed * (b.speedFactor ?? 1); // 디버프(그을림) 등으로 느려질 수 있다
+        const target = [b.wish[0] * speed, b.wish[1] * speed];
         b.inVel = approach2(b.inVel, target, accel * dt);
         if (b.jumpBuffer > 0) {
-          if (b.grounded && !b.float) {
+          if (b.grounded && !b.hold) {
             b.vy = T.jumpSpeed;
             b.grounded = false;
             b.jumpBuffer = 0;
@@ -111,22 +113,29 @@ export class Physics {
           }
         }
       }
-      // 외부 수평 속도 감속 + 상한
-      const decel = b.grounded && !b.float ? T.extGroundFriction : T.extAirDrag;
-      const s = Math.hypot(b.ext[0], b.ext[1]);
-      if (s > 0) {
-        const ns = Math.max(0, s - decel * dt);
-        b.ext[0] *= ns / s;
-        b.ext[1] *= ns / s;
-      }
-      clampExt(b, T.extMaxSpeed);
-      // 수직
-      if (b.float) {
-        b.float.left -= dt;
-        const err = b.float.targetY - bottomOf(b);
-        b.vy = Math.max(-T.liftMaxVSpeed, Math.min(T.liftMaxVSpeed, err * T.liftRiseGain));
-        if (b.float.left <= 0) b.float = null; // 이후 정상 중력
+      if (b.hold) {
+        // 들기: 목표 지점으로 끄는 스프링 + 감쇠. 가속도 상한이 있어 시점을 돌리면 늦게 따라오고,
+        // 감쇠가 임계보다 작아 멈춘 뒤 조금 더 움직였다가 돌아온다.
+        const h = b.hold;
+        const v = [b.ext[0], b.vy, b.ext[1]];
+        const a = [0, 1, 2].map((i) => h.k * (h.target[i] - b.pos[i]) - h.c * v[i]);
+        const am = Math.hypot(...a);
+        if (am > h.amax) for (let i = 0; i < 3; i++) a[i] *= h.amax / am;
+        b.ext[0] += a[0] * dt;
+        b.vy += a[1] * dt;
+        b.ext[1] += a[2] * dt;
+        const sp = Math.hypot(b.ext[0], b.vy, b.ext[1]);
+        if (sp > T.liftMaxSpeed) { b.ext[0] *= T.liftMaxSpeed / sp; b.vy *= T.liftMaxSpeed / sp; b.ext[1] *= T.liftMaxSpeed / sp; }
       } else {
+        // 외부 수평 속도 감속 + 상한
+        const decel = b.grounded ? T.extGroundFriction : T.extAirDrag;
+        const s = Math.hypot(b.ext[0], b.ext[1]);
+        if (s > 0) {
+          const ns = Math.max(0, s - decel * dt);
+          b.ext[0] *= ns / s;
+          b.ext[1] *= ns / s;
+        }
+        clampExt(b, b.extCap ?? T.pushMaxSpeed);
         b.vy = Math.max(-T.terminalFall, b.vy - T.gravity * dt);
       }
     }
@@ -155,10 +164,10 @@ export class Physics {
 
       const dy = b.vy * dt;
       if (dy > 0) {
-        const moved = b.float
+        const moved = b.hold
           ? this.moveUp(b, bodies, dy, new Set())
           : this.moveAxis(b, bodies, 1, dy).moved;
-        if (moved < dy - 1e-6 && !b.float) b.vy = 0; // 천장
+        if (moved < dy - 1e-6) b.vy = 0; // 천장
         b.grounded = false;
         b.groundId = null;
       } else {
@@ -177,17 +186,10 @@ export class Physics {
       disp.set(b.id, [b.pos[0] - start[0], b.pos[1] - start[1], b.pos[2] - start[2]]);
     }
 
-    // 3) 착지 기준 높이 갱신. 떠 있는 물체 위에 서 있는 동안에는 새 기준을 잡지 않는다(높이 누적 방지).
+    // 3) 마지막으로 서 있던 지면(낙하 복구용 안전 위치)
     for (const b of bodies) {
-      if (!b.grounded) continue;
-      if (b.groundStatic) {
-        b.groundRefY = bottomOf(b);
-        if (this.groundIds.has(b.groundStatic)) {
-          b.lastSafe = { ground: b.groundStatic, pos: [b.pos[0], bottomOf(b), b.pos[2]] };
-        }
-      } else if (b.groundId) {
-        const c = byId.get(b.groundId);
-        if (c && c.grounded && !c.float) b.groundRefY = bottomOf(b);
+      if (b.grounded && b.groundStatic && this.groundIds.has(b.groundStatic)) {
+        b.lastSafe = { ground: b.groundStatic, pos: [b.pos[0], bottomOf(b), b.pos[2]] };
       }
     }
   }

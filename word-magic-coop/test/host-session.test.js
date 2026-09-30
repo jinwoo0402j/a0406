@@ -41,14 +41,16 @@ test('방장 + 원격 참가자: 시작·동기화·같은 검증·최대 6명·
     const B = lastLocal.b.find((x) => x.id === 'B').p;
     assert.ok(A[0] > -1.2 && B[0] < 1.2, `A=${A} B=${B}`);
 
-    // 원격 시전도 같은 판정: 쿨다운 중 두 번째 요청은 B에게만 실패 안내
-    const aim = { origin: B, dir: [A[0] - B[0], A[1] - B[1], A[2] - B[2]] };
-    link.receive({ t: 'cast', ...aim });
+    // 원격 시전도 같은 판정: B의 <들기>로 A를 들고 놓은 직후 다시 시전하면 대기시간 안내는 B에게만
+    const aim = { mode: 'AIM', origin: B, dir: [A[0] - B[0], A[1] - B[1], A[2] - B[2]] };
     link.receive({ t: 'cast', ...aim });
     await sleep(80);
-    assert.ok(b.got.some((m) => m.k === 'cast' && m.by === 'B' && m.targets.includes('A')));
-    assert.ok(local.some((m) => m.k === 'cast' && m.by === 'B'), '방장 화면에도 시전 이벤트');
-    assert.ok(b.got.some((m) => m.k === 'castFail'));
+    link.receive({ t: 'liftEnd' });
+    link.receive({ t: 'cast', ...aim });
+    await sleep(80);
+    assert.ok(b.got.some((m) => m.k === 'liftStart' && m.by === 'B' && m.target === 'A'));
+    assert.ok(local.some((m) => m.k === 'liftStart' && m.by === 'B'), '방장 화면에도 들기 이벤트');
+    assert.ok(b.got.some((m) => m.k === 'castFail' && /대기/.test(m.reason)));
     assert.ok(!local.some((m) => m.k === 'castFail'), '실패 안내는 시전자에게만');
 
     // 세 번째부터는 진행 중인 판에 참가(C~F), 일곱 번째는 거절

@@ -1,5 +1,5 @@
 // 조절 가능한 수치 모음. 서버(판정)와 클라이언트(미리보기·표시)가 같은 값을 쓴다.
-// 기획서 v0.2의 초기값을 따르며, 테스트 후 조절하는 것을 전제로 한다.
+// [임시] 표시는 v0.3 기획에서 아직 정하지 않은 정책을 구현하려고 둔 임시값이다. 플레이테스트 후 조정한다.
 
 export const TUNING = {
   // 시뮬레이션
@@ -17,38 +17,87 @@ export const TUNING = {
 
   // 외부 이동(마법) — 입력 이동과 별도로 누적된다
   extGroundFriction: 6, // 지면에서 외부 수평 속도 감속 m/s²
-  extAirDrag: 1.2, // 공중(부양 포함)에서 감속 m/s²
-  extMaxSpeed: 8, // 외부 수평 속도 상한 m/s
+  extAirDrag: 1.2, // 공중에서 감속 m/s²
 
-  // 대상 지정 단어
-  aimedMaxRange: 8, // 「대상을」 최대 거리(시전자 중심 → 대상 중심)
+  // 대상 모드 [임시: v0.2 값을 시작점으로 사용, 확정값 아님]
+  aimedMaxRange: 8, // 조준 대상 최대 거리(시전자 중심 → 대상 중심)
   aimRayLength: 20, // 카메라 조준선 최대 길이
-  nearbyRadius: 3, // 「주변의 대상들을」 반경(시전자 중심 기준)
+  nearbyRadius: 3, // 주변 모드 반경(시전자 중심, 자신 제외, 지형에 가려지면 제외)
 
-  // 작용 단어
-  pushDeltaV: 4, // 「민다」 초기 속도 변화 m/s
-  liftHeight: 2, // 「띄운다」 기준 높이에서 상승량 m
-  liftDuration: 3, // 「띄운다」 총 부양 시간 s
-  liftRiseGain: 6, // 목표 높이로 수렴하는 비율(1/s)
-  liftMaxVSpeed: 7, // 부양 중 최대 수직 속도 m/s
+  // <밀치기> — 즉시 발동, 한 번 적용
+  pushDeltaV: 4, // 초기 속도 변화 m/s
+  pushMaxSpeed: 8, // 외부 수평 속도 상한 m/s
+  pushSelfEpsilon: 0.05,
+
+  // <파이어볼> — 투사체, 실제 명중 시 적용 [임시: 시전 준비시간 없음, 직선 비행, 명중 시 작은 폭발]
+  fireballSpeed: 14, // m/s
+  fireballRadius: 0.22, // 충돌 반지름 m
+  fireballLife: 2.5, // 수명 s (그 뒤엔 소멸)
+  fireballSpawnForward: 0.6, // 시전자 앞 발사 위치
+  fireballBlastRadius: 1.0, // 명중 지점 폭발 반경 m
+  fireballDamage: 25, // 적 피해
+  fireballKnockback: 3, // 폭발에 휩쓸린 대상의 밀림 m/s
+  aimPointRange: 40, // 파이어볼이 향할 조준점을 찾는 거리
+
+  // <들기> — 누르는 동안 유지, 시점을 따라 무게·관성 있게 끌려온다 [임시 수치]
+  liftRange: 8, // 들 수 있는 거리
+  liftCapacity: 3, // 들기 힘(들 수 있는 최대 무게). 이보다 무거우면 들 수 없다
+  liftHeightScale: 3.4, // 최대 높이 = 시전자 발밑 + scale·(1 − 무게/힘) + base
+  liftHeightBase: 0.2,
+  liftSpring: 30, // 목표 지점으로 끄는 스프링 강도(1/s²)
+  liftDamping: 5, // 감쇠(1/s). 임계 감쇠보다 작아 멈춘 뒤 조금 더 움직였다 돌아온다
+  liftMaxAccel: 30, // 끄는 가속도 상한 m/s² (무게가 클수록 줄어든다)
+  liftHoldMin: 1.6, // 시선 앞 유지 거리 범위
+  liftHoldMax: 5,
+  liftEye: 0.5, // 시전자 중심에서 시선 높이
+  liftBreakDistance: 10, // 이보다 멀어지면 놓친다
+  liftMaxSpeed: 15,
+
+  // 수식 단어 중첩 [임시: 곱 연산, 중첩당 배율, 최대 중첩 수]
+  maxModStacks: 5,
+  mods: {
+    BIG: { fireballRadius: 1.35, blastRadius: 1.35, pushReach: 1.2 }, // <큰>: 크기·범위 계열
+    STRONG: { pushForce: 1.3, liftCapacity: 1.4, fireballDamage: 1.5 }, // <세게>: 힘·위력 계열
+  },
+
+  // 아군 명중 [임시 디버프: 그을림 — 잠시 느려짐. 체력 감소 없음]
+  allyDebuffDuration: 2,
+  allyDebuffSpeed: 0.5,
+
+  // 시험용 적(허수아비)
+  dummyHp: 100,
+  dummyRespawn: 3,
 
   // 시전
-  castCooldown: 1, // 정상 시전 재사용 대기시간 s
-  pushSelfEpsilon: 0.05, // 시전자와 대상의 수평 위치가 이만큼 가까우면 카메라 전방 사용
+  castCooldown: 1, // 정상 시전 재사용 대기 s (들기는 놓을 때 적용)
 
   // 보호·복구
-  releaseImmunity: 2, // R 이후 다른 플레이어의 이동 마법 면역 s
-  releaseCooldown: 0, // R 재사용 대기(초기 0: 제한 없음)
-  killY: -12, // 이 높이 아래로 떨어지면 안전 위치로 복구
+  releaseImmunity: 2, // R 이후 다른 플레이어의 마법에 면역 s
+  releaseCooldown: 0,
+  killY: -12,
 
   // 단어
-  pickupRadius: 2, // E로 주울 수 있는 거리(수평)
-  dropForward: 0.9, // 내려놓을 때 앞쪽 거리
+  pickupRadius: 2,
+  dropForward: 0.9,
 
   // 목표
-  goalHoldTime: 2, // 짐과 두 사람이 도착 구역에 함께 있어야 하는 시간 s
+  goalHoldTime: 2,
 
   // 네트워크
-  aimHistory: 1.0, // 조준 판정에 쓰는 과거 위치 기록 길이(초). 이보다 오래된 시점은 이 한도로 잘린다.
-  maxCameraOffset: 8, // 시전 요청의 조준 원점이 시전자에게서 떨어질 수 있는 최대 거리
+  aimHistory: 1.0,
+  maxCameraOffset: 8,
 };
+
+// 수식 배율: 보유·장착한 개수만큼 중첩(상한 maxModStacks)
+export function modFactor(tuning, modCounts, word, key) {
+  const step = tuning.mods[word]?.[key];
+  if (!step) return 1;
+  const n = Math.min(tuning.maxModStacks, modCounts?.[word] || 0);
+  return step ** n;
+}
+
+export function modProduct(tuning, modCounts, key) {
+  let f = 1;
+  for (const word of Object.keys(tuning.mods)) f *= modFactor(tuning, modCounts, word, key);
+  return f;
+}
