@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>단어로 만드는 마법</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&display=swap">
+  <link rel="stylesheet" href="/client/style.css">
+  <script type="importmap">{ "imports": { "three": "/vendor/three/three.module.js" } }</script>
+</head>
+<body>
+  <canvas id="view"></canvas>
+
+  <!-- 로비 -->
+  <section id="lobby" class="screen">
+    <div class="card">
+      <h1>단어로 만드는 마법</h1>
+      <p class="sub">2인 협동 프로토타입 · 대상 지정 규칙 × 작용</p>
+      <div class="seats">
+        <div class="seat seat-A"><span class="dot"></span>플레이어 A</div>
+        <div class="seat seat-B"><span class="dot"></span>플레이어 B</div>
+      </div>
+      <p id="lobby-status" class="status">호스트에 접속해 두 사람이 모이면 시작해요.</p>
+      <p id="lobby-note" class="note" hidden></p>
+      <button id="join-btn" type="button">참가하기</button>
+      <div id="lobby-address" class="address" hidden></div>
+      <details class="howto">
+        <summary>조작법</summary>
+        <table>
+          <tr><td>WASD / 마우스 / Space</td><td>이동 / 시점·조준 / 점프</td></tr>
+          <tr><td>좌클릭</td><td>현재 문장 시전</td></tr>
+          <tr><td>E</td><td>가까운 단어 줍기</td></tr>
+          <tr><td>R</td><td>자신에게 걸린 이동 효과 해제 + 2초 보호</td></tr>
+          <tr><td>Tab</td><td>인벤토리 · 두 슬롯 편집 · 내려놓기 · 재시작</td></tr>
+        </table>
+      </details>
+    </div>
+  </section>
+
+  <!-- 게임 HUD -->
+  <section id="hud" hidden>
+    <div id="crosshair"></div>
+
+    <div id="spell" class="panel">
+      <div class="who"><span id="who-chip" class="chip"></span><span id="who-name"></span></div>
+      <div class="sentence">
+        <span id="slot-target" class="word target"></span>
+        <span id="slot-action" class="word action"></span>
+      </div>
+      <div class="cooldown"><div id="cooldown-bar"></div></div>
+      <div id="preview-note" class="preview-note"></div>
+    </div>
+
+    <div id="goal" class="panel">
+      <div class="goal-title">도착 구역</div>
+      <div class="goal-items">
+        <span data-k="cargo">짐</span><span data-k="A">A</span><span data-k="B">B</span>
+      </div>
+      <div class="goal-bar"><div id="goal-fill"></div></div>
+    </div>
+
+    <ul id="log"></ul>
+
+    <div id="badges"></div>
+    <div id="prompt"></div>
+    <div id="toast"></div>
+
+    <div id="keys">WASD 이동 · Space 점프 · 좌클릭 시전 · E 줍기 · R 해제 · Tab 편집</div>
+
+    <div id="lock-hint">화면을 클릭하면 조작을 시작해요</div>
+
+    <div id="clear-banner" hidden>
+      <div class="big">도착 성공!</div>
+      <div class="small">짐과 두 사람이 함께 도착했어요 · Tab → 처음부터 다시</div>
+    </div>
+  </section>
+
+  <!-- 주문 편집창 -->
+  <section id="editor" hidden>
+    <div class="card wide">
+      <h2>주문 편집</h2>
+      <p class="sub">대상 지정 단어 하나와 작용 단어 하나를 슬롯에 넣어요. 카드를 누르면 장착돼요.</p>
+      <div class="slots">
+        <div class="slot-box">
+          <div class="slot-name">대상 지정</div>
+          <div id="ed-slot-target" class="word target big"></div>
+          <button type="button" data-unequip="target" class="ghost">비우기</button>
+        </div>
+        <div class="plus">+</div>
+        <div class="slot-box">
+          <div class="slot-name">작용</div>
+          <div id="ed-slot-action" class="word action big"></div>
+          <button type="button" data-unequip="action" class="ghost">비우기</button>
+        </div>
+      </div>
+      <h3>내 단어</h3>
+      <div id="inventory"></div>
+      <p class="note">단어는 한 사람만 가질 수 있어요. 내려놓으면 상대가 E로 주울 수 있고, 장착 중이던 슬롯은 비어요.</p>
+      <div class="editor-actions">
+        <button type="button" id="restart-btn" class="danger">처음부터 다시 (두 사람 모두)</button>
+        <button type="button" id="close-editor">닫기 (Tab)</button>
+      </div>
+    </div>
+  </section>
+
+  <script type="module" src="/client/main.js"></script>
+</body>
+</html>
