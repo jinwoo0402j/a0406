@@ -19,6 +19,8 @@ const MIME = {
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
 };
+// 혼자 해보기 모드는 판정 코드(game.js, physics.js)를 브라우저에서 불러온다. 서버 파일 중 이 둘만 제공한다.
+const SERVER_FILES_FOR_CLIENT = new Set(['game.js', 'physics.js']);
 const ROUTES = [
   ['/vendor/three/', path.join(ROOT, 'node_modules/three/build')],
   ['/shared/', path.join(ROOT, 'shared')],
@@ -29,6 +31,9 @@ function serveStatic(req, res) {
   const url = new URL(req.url, 'http://x');
   let file = null;
   if (url.pathname === '/' || url.pathname === '/index.html') file = path.join(ROOT, 'client/index.html');
+  if (url.pathname.startsWith('/server/') && SERVER_FILES_FOR_CLIENT.has(url.pathname.slice(8))) {
+    file = path.join(ROOT, 'server', url.pathname.slice(8));
+  }
   for (const [prefix, dir] of ROUTES) {
     if (url.pathname.startsWith(prefix)) {
       const f = path.normalize(path.join(dir, decodeURIComponent(url.pathname.slice(prefix.length))));

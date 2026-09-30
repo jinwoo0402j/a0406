@@ -23,7 +23,11 @@
       </div>
       <p id="lobby-status" class="status">호스트에 접속해 두 사람이 모이면 시작해요.</p>
       <p id="lobby-note" class="note" hidden></p>
-      <button id="join-btn" type="button">참가하기</button>
+      <div class="lobby-actions">
+        <button id="join-btn" type="button">2인 참가하기</button>
+        <button id="solo-btn" type="button" class="secondary">혼자 해보기</button>
+      </div>
+      <p id="solo-note" class="note" hidden>PC의 키보드와 마우스로 플레이해요. 두 사람이 각자 조작하는 네트워크 플레이는 호스트 프로그램(<code>npm start</code>)으로 할 수 있어요.</p>
       <div id="lobby-address" class="address" hidden></div>
       <details class="howto">
         <summary>조작법</summary>
@@ -33,6 +37,7 @@
           <tr><td>E</td><td>가까운 단어 줍기</td></tr>
           <tr><td>R</td><td>자신에게 걸린 이동 효과 해제 + 2초 보호</td></tr>
           <tr><td>Tab</td><td>인벤토리 · 두 슬롯 편집 · 내려놓기 · 재시작</td></tr>
+          <tr><td>Q</td><td>(혼자 해보기) A·B 조작 전환</td></tr>
         </table>
       </details>
     </div>

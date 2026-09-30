@@ -1,7 +1,7 @@
 // three.js 장면. 서버 상태를 그대로 그리며, 판정은 하지 않는다(미리보기 강조 표시만).
 import * as THREE from 'three';
-import { LEVEL } from '/shared/level.js';
-import { WORDS } from '/shared/words.js';
+import { LEVEL } from '../shared/level.js';
+import { WORDS } from '../shared/words.js';
 import { makeLabel } from './labels.js';
 
 const PLAYER_COLOR = { A: '#ff7f73', B: '#5fa8ff' };
@@ -33,10 +33,11 @@ function shade(hex, k) {
 }
 
 export class Renderer {
-  constructor(canvas) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
+  // low: 저사양 모드(그림자·안티앨리어싱 끔, 픽셀 비율 1). 주소에 ?gfx=low
+  constructor(canvas, { low = false } = {}) {
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !low });
+    this.renderer.setPixelRatio(low ? 1 : Math.min(window.devicePixelRatio, 2));
+    this.renderer.shadowMap.enabled = !low;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
 
     this.scene = new THREE.Scene();

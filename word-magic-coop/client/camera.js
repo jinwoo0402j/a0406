@@ -1,6 +1,6 @@
 // 3인칭 어깨 너머 카메라. 조준선 = 카메라 위치에서 화면 중앙(십자선) 방향.
-import { rayBox } from '/shared/geom.js';
-import { LEVEL } from '/shared/level.js';
+import { rayBox } from '../shared/geom.js';
+import { LEVEL } from '../shared/level.js';
 
 export const CAM = { dist: 5, shoulder: 0.6, pivotUp: 0.75, minPitch: -1.1, maxPitch: 0.95, pad: 0.25 };
 

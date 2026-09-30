@@ -3,10 +3,11 @@
 import { Renderer } from './render.js';
 import { cameraRig, CAM } from './camera.js';
 import { FONT_STACK } from './labels.js';
-import { LEVEL } from '/shared/level.js';
-import { TUNING } from '/shared/tuning.js';
-import { WORDS } from '/shared/words.js';
-import { resolveSpell } from '/shared/targeting.js';
+import { LEVEL } from '../shared/level.js';
+import { TUNING } from '../shared/tuning.js';
+import { WORDS } from '../shared/words.js';
+import { resolveSpell } from '../shared/targeting.js';
+import { LocalHost } from './local.js';
 
 const $ = (id) => document.getElementById(id);
 const NAMES = { A: 'A', B: 'B', rock: '돌', box1: '상자', box2: '상자', cargo: '짐' };
@@ -14,7 +15,9 @@ const BODY_DEF = new Map(LEVEL.bodies.map((d) => [d.id, d]));
 const SENS = 0.0025;
 
 const S = {
-  ws: null,
+  conn: null, // 호스트 연결: WebSocket 래퍼 또는 LocalHost(혼자 해보기)
+  solo: false,
+  views: {}, // 혼자 해보기에서 캐릭터별 카메라 방향
   me: null,
   phase: 'lobby', // lobby | connecting | waiting | playing
   snaps: [],
@@ -51,21 +54,29 @@ function setLobby(status, note = null) {
   if (note) $('lobby-note').textContent = note;
 }
 
+function setJoinDisabled(v) {
+  $('join-btn').disabled = v;
+  $('solo-btn').disabled = v;
+}
+
 function connect() {
-  if (S.ws) return;
+  if (S.conn) return;
   S.phase = 'connecting';
-  $('join-btn').disabled = true;
+  setJoinDisabled(true);
   setLobby('호스트에 접속하는 중…');
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
-  S.ws = ws;
+  S.conn = {
+    send: (msg) => { if (ws.readyState === 1) ws.send(JSON.stringify(msg)); },
+    close: () => ws.close(),
+  };
   ws.onmessage = (e) => onMessage(JSON.parse(e.data));
   ws.onclose = (e) => {
     const was = S.phase;
     console.log(`[net] 연결 종료 code=${e.code} reason=${e.reason || '-'} phase=${was}`);
-    S.ws = null;
+    S.conn = null;
     S.me = null;
     S.phase = 'lobby';
-    $('join-btn').disabled = false;
+    setJoinDisabled(false);
     updateSeats({ A: false, B: false });
     if (S.closingOnPurpose) { S.closingOnPurpose = false; return; }
     if (was === 'full') return;
@@ -73,8 +84,39 @@ function connect() {
   };
 }
 
+// 혼자 해보기: 판정 코드를 이 브라우저에서 돌리고 A·B를 Q로 번갈아 조작한다.
+function startSolo() {
+  if (S.conn) return;
+  S.solo = true;
+  setJoinDisabled(true);
+  S.conn = new LocalHost(onMessage);
+}
+
 function send(msg) {
-  if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(msg));
+  S.conn?.send(msg);
+}
+
+function updateWho() {
+  $('who-chip').style.background = S.me === 'A' ? 'var(--a)' : 'var(--b)';
+  const other = S.me === 'A' ? 'B' : 'A';
+  $('who-name').textContent = S.solo ? `플레이어 ${S.me} 조작 중 · Q로 ${other} 전환` : `플레이어 ${S.me} (나)`;
+  $('keys').textContent = `WASD 이동 · Space 점프 · 좌클릭 시전 · E 줍기 · R 해제 · Tab 편집${S.solo ? ' · Q 캐릭터 전환' : ''}`;
+}
+
+function switchCharacter() {
+  if (!S.solo || S.phase !== 'playing') return;
+  S.views[S.me] = { yaw: S.yaw, pitch: S.pitch };
+  const next = S.me === 'A' ? 'B' : 'A';
+  S.conn.switchTo(next);
+  S.me = next;
+  const v = S.views[next] || { yaw: 0, pitch: -0.08 };
+  S.yaw = v.yaw;
+  S.pitch = v.pitch;
+  S.lastWish = '';
+  S.editorKey = '';
+  if (S.editorOpen) renderEditor();
+  updateWho();
+  log(`이제 플레이어 ${next}를 조작해요`);
 }
 
 function updateSeats(seats) {
@@ -90,6 +132,7 @@ function onMessage(m) {
     case 'welcome': {
       S.me = m.you;
       S.phase = 'waiting';
+      if (m.solo) break;
       setLobby(`플레이어 ${m.you}(으)로 참가했어요. 상대를 기다리는 중…`);
       const port = m.port;
       const lines = [];
@@ -134,9 +177,11 @@ function startPlaying() {
   $('lobby').hidden = true;
   $('hud').hidden = false;
   $('log').innerHTML = '';
-  $('who-chip').style.background = S.me === 'A' ? 'var(--a)' : 'var(--b)';
-  $('who-name').textContent = `플레이어 ${S.me} (나)`;
-  log('두 사람이 모였어요! 같은 주문을 친구·돌·상자에 써 보세요.');
+  S.views = {};
+  updateWho();
+  log(S.solo
+    ? '혼자 해보기: Q로 A와 B를 번갈아 조작해요. 같은 주문을 친구·돌·상자에 써 보세요.'
+    : '두 사람이 모였어요! 같은 주문을 친구·돌·상자에 써 보세요.');
 }
 
 // ------------------------------------------------------------------ 스냅숏 보간
@@ -339,6 +384,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') { e.preventDefault(); sendInput(true); }
   if (e.code === 'KeyE') send({ t: 'pickup' });
   if (e.code === 'KeyR') send({ t: 'release' });
+  if (e.code === 'KeyQ') switchCharacter();
 });
 window.addEventListener('keyup', (e) => S.keys.delete(e.code));
 window.addEventListener('blur', () => S.keys.clear());
@@ -410,13 +456,35 @@ for (const b of document.querySelectorAll('[data-unequip]')) {
   b.onclick = () => send({ t: 'equip', slot: b.dataset.unequip, token: null });
 }
 $('close-editor').onclick = () => toggleEditor(false);
+// 확인 창(confirm)이 막힌 환경도 있어 페이지 안에서 두 번 눌러 확인한다.
+let restartArmed = null;
 $('restart-btn').onclick = () => {
-  if (confirm('두 사람 모두 처음 상태(위치·단어·슬롯·효과)로 돌아가요. 다시 시작할까요?')) {
-    send({ t: 'restart' });
-    toggleEditor(false);
+  const btn = $('restart-btn');
+  if (!restartArmed) {
+    btn.textContent = '한 번 더 누르면 처음부터 다시 시작해요';
+    restartArmed = setTimeout(() => {
+      restartArmed = null;
+      btn.textContent = '처음부터 다시 (두 사람 모두)';
+    }, 3000);
+    return;
   }
+  clearTimeout(restartArmed);
+  restartArmed = null;
+  btn.textContent = '처음부터 다시 (두 사람 모두)';
+  send({ t: 'restart' });
+  toggleEditor(false);
 };
 $('join-btn').onclick = () => connect();
+$('solo-btn').onclick = () => startSolo();
+if (window.WM_SOLO_ONLY) {
+  // 서버 없이 열린 페이지(예: 공유 링크): 2인 접속 버튼 대신 혼자 해보기만 보여 준다.
+  $('join-btn').hidden = true;
+  document.querySelector('.seats').hidden = true;
+  $('solo-btn').classList.remove('secondary');
+  $('solo-btn').textContent = '시작하기';
+  $('lobby-status').textContent = '서버 없이 이 페이지에서 바로 해 볼 수 있어요. 혼자서 A와 B를 번갈아 조작해요.';
+  $('solo-note').hidden = false;
+}
 // 편집창 버튼에 포커스가 남으면 Space 등으로 다시 눌릴 수 있으므로 클릭 후 포커스를 푼다.
 $('editor').addEventListener('click', () => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
 
@@ -465,7 +533,10 @@ function updateHud(frame) {
   const note = $('preview-note');
   const ch = $('crosshair');
   ch.className = '';
-  if (!pv || pv.incomplete) {
+  if (S.editorOpen) {
+    note.textContent = '주문 편집 중 (시전·시점 회전 잠금)';
+    note.className = 'preview-note';
+  } else if (!pv || pv.incomplete) {
     note.textContent = 'Tab에서 두 슬롯을 채우세요';
     note.className = 'preview-note bad';
   } else if (pv.ok.size) {
@@ -570,9 +641,11 @@ async function boot() {
   try {
     await Promise.race([document.fonts.load(`48px ${FONT_STACK}`), new Promise((r) => setTimeout(r, 1500))]);
   } catch { /* 글꼴이 없으면 시스템 글꼴 사용 */ }
-  renderer = new Renderer($('view'));
+  renderer = new Renderer($('view'), { low: new URLSearchParams(location.search).get('gfx') === 'low' });
   requestAnimationFrame(frame);
-  if (new URLSearchParams(location.search).has('autojoin')) connect();
+  const q = new URLSearchParams(location.search);
+  if (q.has('autojoin')) connect();
+  if (q.has('solo')) startSolo();
 }
 boot();
 
@@ -611,4 +684,6 @@ window.__wm = {
   },
   hold(code, on) { if (on) S.keys.add(code); else S.keys.delete(code); },
   toggleEditor,
+  switchCharacter,
+  get solo() { return S.solo; },
 };
