@@ -111,6 +111,15 @@ button.danger { background: #ff7b7b; }
 #crosshair.fire { border-color: #ff8a3d; }
 
 #badges { position: absolute; left: 16px; bottom: 16px; display: flex; gap: 8px; }
+/* 핫바(마인크래프트식 단어 칸) */
+#hotbar { position: absolute; left: 50%; bottom: 58px; transform: translateX(-50%); display: flex; gap: 6px; padding: 6px; background: rgba(47, 42, 61, 0.55); border-radius: 14px; }
+.hb-slot { position: relative; display: flex; align-items: center; justify-content: center; min-width: 76px; height: 56px; padding: 10px 10px 0; border-radius: 10px; background: rgba(255, 255, 255, 0.85); border: 3px solid transparent; }
+.hb-slot .word { font-size: 16px; min-height: 28px; padding: 3px 10px; }
+.hb-slot.sel { border-color: #ffe066; background: #fff; transform: translateY(-3px); }
+.hb-slot.eq::after { content: '손'; position: absolute; top: -9px; right: -6px; background: var(--action); color: #fff; font-size: 11px; padding: 1px 5px; border-radius: 999px; }
+.hb-num { position: absolute; left: 6px; top: 1px; font-size: 11px; font-weight: 700; color: var(--muted); }
+.hb-count { position: absolute; right: 5px; bottom: 1px; font-size: 13px; font-weight: 700; color: var(--ink); }
+.hb-empty { color: #fff; font-size: 14px; padding: 8px 12px; }
 .badge { background: var(--panel); border-radius: 999px; padding: 6px 12px; font-size: 15px; border: 1px solid var(--panel-border); }
 .badge.float { color: #1a8fb5; }
 .badge.shield { color: #6c5ce7; }
@@ -118,11 +127,11 @@ button.danger { background: #ff7b7b; }
 
 #prompt { position: absolute; left: 50%; top: calc(50% + 46px); transform: translateX(-50%); background: rgba(47, 42, 61, 0.78); color: #fff; padding: 6px 14px; border-radius: 999px; font-size: 16px; opacity: 0; transition: opacity 0.15s; white-space: nowrap; }
 #prompt.show { opacity: 1; }
-#toast { position: absolute; left: 50%; bottom: 90px; transform: translateX(-50%); background: rgba(255, 255, 255, 0.95); color: #c0392b; padding: 8px 16px; border-radius: 999px; font-size: 17px; opacity: 0; transition: opacity 0.2s; white-space: nowrap; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); }
+#toast { position: absolute; left: 50%; bottom: 134px; transform: translateX(-50%); background: rgba(255, 255, 255, 0.95); color: #c0392b; padding: 8px 16px; border-radius: 999px; font-size: 17px; opacity: 0; transition: opacity 0.2s; white-space: nowrap; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); }
 #toast.show { opacity: 1; }
 #toast.info { color: var(--ink); }
 #keys { position: absolute; right: 16px; bottom: 16px; font-size: 14px; color: rgba(47, 42, 61, 0.8); background: rgba(255, 255, 255, 0.6); padding: 6px 10px; border-radius: 10px; }
-#lock-hint { position: absolute; left: 50%; top: 80%; transform: translateX(-50%); background: rgba(108, 92, 231, 0.9); color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 17px; }
+#lock-hint { position: absolute; left: 50%; top: 66%; transform: translateX(-50%); background: rgba(108, 92, 231, 0.9); color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 17px; }
 #clear-banner { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); text-align: center; background: rgba(255, 255, 255, 0.92); padding: 16px 30px; border-radius: 24px; box-shadow: 0 16px 40px rgba(60, 50, 120, 0.2); animation: pop 0.4s ease; }
 #clear-banner .big { font-size: 44px; color: #ff8a3d; }
 #clear-banner .small { font-size: 16px; color: var(--muted); }
@@ -143,7 +152,6 @@ button.danger { background: #ff7b7b; }
 .inv-card.equipped { border-color: #6c5ce7; }
 .inv-card .word { cursor: pointer; justify-content: center; }
 .inv-card .meta { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
-.inv-card .meta button.give:not(:disabled) { color: var(--ok); border-color: var(--ok); }
 .inv-empty { color: var(--muted); font-size: 15px; }
 .editor-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
 

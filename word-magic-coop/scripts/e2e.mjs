@@ -240,19 +240,21 @@ try {
   await A.evaluate(() => window.__wm.endCast());
   await sleep(1300);
 
-  // [브라우저] 건네주기: A가 편집창에서 "B에게 주기"를 누르면 B가 바로 받는다(내려놓기·줍기 없이)
-  place('A', [0, 0, 8]); place('B', [1.4, 0, 8]); place('rock', [-3, 0, 6]); place('box1', [3, 0, 6]);
+  // [브라우저] 마인크래프트식 주고받기: A가 핫바에서 <들기>를 고르고 Q로 B 쪽에 던지면, B 몸에 닿아 자동으로 주워진다
+  place('A', [0, 0, 8]); place('B', [0, 0, 11]); place('rock', [-3, 0, 6]); place('box1', [3, 0, 6]);
   await sleep(700);
-  await A.keyboard.press('Tab');
-  await sleep(400);
-  const giveBtn = A.locator('.inv-card', { hasText: '들기' }).getByRole('button', { name: 'B에게 주기' });
-  check('편집창에 가까운 친구에게 주기 버튼', await giveBtn.isEnabled().catch(() => false));
-  await giveBtn.click();
-  await sleep(500);
-  await A.keyboard.press('Tab');
+  const bar = await A.evaluate(() => window.__wm.hotbar);
+  const liftSlot = bar.findIndex((x) => x.word === 'LIFT');
+  check('핫바에 가진 단어가 칸으로 보임', liftSlot >= 0 && bar.length >= 2, JSON.stringify(bar));
+  await A.keyboard.press(`Digit${liftSlot + 1}`);
+  await A.evaluate(() => { window.__wm.setView(0, 0); window.__wm.aimAt('B'); });
+  await sleep(200);
+  await A.screenshot({ path: `${OUT}/17-A-hotbar.png` });
+  await A.keyboard.press('KeyQ');
+  await sleep(1300);
   const bInv = await B.evaluate(() => window.__wm.latest.p.B.inv);
   const bToast = await B.evaluate(() => document.getElementById('toast').textContent);
-  check('[브라우저] B가 바로 받고 안내가 뜸', bInv.includes('w8') && /받았어요/.test(bToast), `${bInv} / ${bToast}`);
+  check('[브라우저] Q로 던진 단어가 B에게 닿아 주워지고 안내가 뜸', bInv.includes('w8') && /받았어요/.test(bToast), `${bInv} / ${bToast}`);
   await sleep(300);
 
   place('cargo', [0, 1.6, 34]);
@@ -264,7 +266,7 @@ try {
   const cleared = await Promise.all([A, B].map((p) => p.evaluate(() => !document.getElementById('clear-banner').hidden)));
   check('[시각] 도착 성공 표시가 양쪽 화면에 보임', cleared.every(Boolean), JSON.stringify(cleared));
   const summary = await A.evaluate(() => document.getElementById('clear-summary').textContent);
-  check('도착하면 판 요약이 보임(주문 수·같이 들기·건네기)', /A: 주문 \d+번/.test(summary) && /같이 들기 [1-9]/.test(summary) && /건네기 1/.test(summary), summary.replace(/\n/g, ' | '));
+  check('도착하면 판 요약이 보임(주문 수·같이 들기·건네준 단어)', /A: 주문 \d+번/.test(summary) && /같이 들기 [1-9]/.test(summary) && /건네준 단어 1/.test(summary), summary.replace(/\n/g, ' | '));
   await A.screenshot({ path: `${OUT}/14-A-clear.png` });
 
   // 7) B의 연결이 끊기면 A는 안내 후 로비로
