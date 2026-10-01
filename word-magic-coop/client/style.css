@@ -110,7 +110,7 @@ button.danger { background: #f6a48f; box-shadow: 0 4px 0 #d9826d; }
 .goal-items span.in { background: var(--ok); color: #fff; }
 .goal-bar { height: 8px; width: 160px; border-radius: 999px; background: var(--cream-2); overflow: hidden; }
 #goal-fill { height: 100%; width: 0%; background: var(--ok); }
-#guide { position: absolute; top: 108px; left: 50%; transform: translateX(-50%); background: var(--yellow); color: var(--ink); padding: 8px 18px 8px 34px; border-radius: 999px; font-size: 16px; white-space: nowrap; box-shadow: 0 4px 0 var(--yellow-dark), 0 10px 20px rgba(120, 90, 40, 0.15); animation: bob 2.4s ease-in-out infinite; }
+#guide { position: absolute; top: 108px; left: 50%; transform: translateX(-50%); background: var(--yellow); color: var(--ink); padding: 8px 18px 8px 34px; border-radius: 999px; font-size: 16px; white-space: nowrap; box-shadow: 0 4px 0 var(--yellow-dark), 0 10px 20px rgba(120, 90, 40, 0.15); animation: bob 2.4s ease-in-out infinite; will-change: translate; }
 #guide::before { content: ''; position: absolute; left: 12px; top: 50%; width: 14px; height: 14px; margin-top: -7px; background: var(--leaf); border-radius: 0 70% 0 70%; transform: rotate(-20deg); }
 #guide .key { margin-left: 6px; border-color: var(--yellow-dark); background: #fff7cf; }
 
@@ -154,7 +154,7 @@ button.danger { background: #f6a48f; box-shadow: 0 4px 0 #d9826d; }
 #toast.info { color: var(--ink); border-color: var(--panel-border); }
 #toast.info::after { border-color: var(--panel-border); }
 #keys { position: absolute; right: 16px; bottom: 16px; font-size: 13px; color: var(--ink); background: rgba(255, 251, 234, 0.75); padding: 6px 12px; border-radius: 999px; }
-#lock-hint { position: absolute; left: 50%; top: 66%; transform: translateX(-50%); background: var(--teal); color: #fff; padding: 10px 22px; border-radius: 999px; font-size: 17px; box-shadow: 0 4px 0 var(--teal-dark); animation: bob 2s ease-in-out infinite; }
+#lock-hint { position: absolute; left: 50%; top: 66%; transform: translateX(-50%); background: var(--teal); color: #fff; padding: 10px 22px; border-radius: 999px; font-size: 17px; box-shadow: 0 4px 0 var(--teal-dark); animation: bob 2s ease-in-out infinite; will-change: translate; }
 #clear-banner { position: absolute; left: 50%; top: 20%; transform: translateX(-50%); text-align: center; background: var(--cream); border: 4px solid var(--panel-border); padding: 18px 34px; border-radius: 36px; box-shadow: var(--shadow); animation: pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); }
 #clear-banner .big { font-size: 46px; color: #ff9f6e; text-shadow: 0 4px 0 #ffe0c9; }
 #clear-banner .small { font-size: 16px; color: var(--muted); }
@@ -187,7 +187,8 @@ button.danger { background: #f6a48f; box-shadow: 0 4px 0 #d9826d; }
 @keyframes fadein { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 @keyframes pop { from { transform: translateX(-50%) scale(0.7); opacity: 0; } to { transform: translateX(-50%) scale(1); opacity: 1; } }
 @keyframes popin { from { transform: scale(0.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-@keyframes bob { 0%, 100% { margin-top: 0; } 50% { margin-top: -3px; } }
+/* 둥실둥실: margin 대신 translate로(다시 그리지 않고 합성만 → 기호가 많아도 가볍다) */
+@keyframes bob { 0%, 100% { translate: 0 0; } 50% { translate: 0 -3px; } }
 /* 도착 축하 꽃가루 */
 .confetti { position: fixed; top: -20px; width: 10px; height: 14px; border-radius: 3px; pointer-events: none; z-index: 20; animation: fall linear forwards; }
 @keyframes fall { to { transform: translateY(110vh) rotate(720deg); } }

@@ -102,7 +102,7 @@ export const TUNING = {
 
   // 네트워크
   aimHistory: 1.0,
-  maxCameraOffset: 8,
+  maxCameraOffset: 12, // 3인칭 카메라(5m 뒤) + 내 캐릭터 예측으로 앞당겨진 만큼까지 허용
 };
 
 // 수식 배율: 보유·장착한 개수만큼 중첩(상한 maxModStacks)

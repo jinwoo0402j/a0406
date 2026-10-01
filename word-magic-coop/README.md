@@ -261,6 +261,7 @@ word-magic-coop/
   scripts/build-play.mjs 링크로 여는 혼자 해보기 페이지 생성 → dist/play.html
   scripts/build-web.mjs  웹 버전(P2P) 생성 → dist/web/  (Vercel이 이 스크립트로 빌드)
   scripts/e2e-p2p.mjs    웹 버전 E2E: 로컬 신호 서버 + 브라우저 3개로 실제 WebRTC 연결 확인
+  scripts/lag-check.mjs  반응 지연 측정: 인위적 지연을 넣은 중계로 내 캐릭터 예측 끔/켬 비교
 ```
 
 ## 8. 실제로 수행한 테스트
@@ -270,6 +271,7 @@ npm test          # 단위·시뮬레이션·네트워크·브라우저 호스�
 npm run e2e       # (선택) 호스트 프로그램 + 브라우저 두 개 E2E. playwright 필요:
                   #   npm i -D playwright && npx playwright install chromium
 node scripts/e2e-p2p.mjs   # (선택) 웹 버전 P2P E2E. npm i --no-save peer peerjs playwright
+LAG=60 node scripts/lag-check.mjs   # (선택) 한 방향 60ms 지연에서 예측 끔/켬 비교
 ```
 
 테스트 환경: Linux 컨테이너, Node 22.22.2, Playwright 1.56의 헤드리스 Chromium(GPU 없이 SwiftShader 소프트웨어 렌더링), 클라이언트는 모두 **같은 머신**.
