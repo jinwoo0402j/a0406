@@ -231,6 +231,61 @@ export class Inventory {
     return this.clickSlot(this.sel, button, shift, now);
   }
 
+  // ------------------------------------------------------------ 끌기·두 번 클릭(마인크래프트)
+  // 커서에 든 묶음을 끌어서 놓을 수 있는 칸: 가방·핫바의 빈칸이나 같은 수식 묶음, 빈 수식 칸(수식만)
+  canDrag(area, i) {
+    const c = this.cursor;
+    if (!c) return false;
+    if (area === 'mod') return isMod(c.word) && i >= this.mods.length && i < this.modSlots;
+    if (area !== 'inv') return false;
+    const s = this.slots[i];
+    return !s || (s.word === c.word && isMod(c.word));
+  }
+
+  // 끌어서 나눠 놓기: 좌클릭으로 끌면 고르게 나누고(남는 건 커서에), 우클릭으로 끌면 칸마다 하나.
+  // 커서에 든 개수보다 많은 칸은 무시한다. 수식 칸은 한 칸에 하나.
+  dragPlace(targets, button, now) {
+    const c = this.cursor;
+    if (!c) return false;
+    const seen = new Set();
+    const list = targets.filter((t) => {
+      const k = `${t.area}:${t.i}`;
+      if (seen.has(k) || !this.canDrag(t.area, t.i)) return false;
+      seen.add(k);
+      return true;
+    }).slice(0, c.tokens.length);
+    if (!list.length) return false;
+    const per = button === 2 ? 1 : Math.floor(c.tokens.length / list.length);
+    const mods = [...this.mods];
+    for (const t of list) {
+      const n = t.area === 'mod' ? Math.min(per, 1) : per;
+      if (n < 1) continue;
+      const ids = c.tokens.splice(c.tokens.length - n, n);
+      if (t.area === 'mod') mods.push(...ids);
+      else if (this.slots[t.i]) this.slots[t.i].tokens.push(...ids);
+      else this.slots[t.i] = { word: c.word, tokens: ids };
+    }
+    if (mods.length !== this.mods.length) this.setMods(mods, now);
+    if (!c.tokens.length) this.cursor = null;
+    return true;
+  }
+
+  // 두 번 클릭: 커서에 든 수식과 같은 단어를 가방·핫바에서 모두 모은다(수식 칸에 붙인 것은 그대로)
+  collect() {
+    const c = this.cursor;
+    if (!c || !isMod(c.word)) return false;
+    let got = false;
+    for (let k = 0; k < this.slots.length; k++) {
+      const s = this.slots[k];
+      if (s && s.word === c.word) {
+        c.tokens.push(...s.tokens);
+        this.slots[k] = null;
+        got = true;
+      }
+    }
+    return got;
+  }
+
   // 칸 위에서 숫자키: 그 칸과 핫바 n번 칸을 바꾼다
   swapWithHotbar(i, n) {
     if (i === n) return false;

@@ -291,8 +291,17 @@ export class Game {
       case 'loadout': return this.onLoadout(pid, msg);
       case 'release': return this.onRelease(pid);
       case 'restart': return this.onRestart(pid);
+      case 'rtt': return this.onRtt(pid, msg);
       default: return { ok: false };
     }
+  }
+
+  // 왕복 지연 재기: 보낸 사람에게 받은 값을 그대로 돌려준다(내 캐릭터 예측에 쓴다)
+  onRtt(pid, msg) {
+    const c = Number(msg.c);
+    if (!Number.isFinite(c)) return { ok: false };
+    this.emit({ k: 'pong', to: pid, c });
+    return { ok: true };
   }
 
   onInput(pid, msg) {
