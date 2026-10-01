@@ -55,18 +55,23 @@ test('퇴장: 가진 단어는 그 자리에 떨어지고, 다시 들어오면 �
   }
   run(g, 1);
   assert.ok(g.body('A').grounded, '받침이 사라져도 A는 정상적으로 떨어져 선다');
+  assert.equal(g.token('t3').owner, 'A', '떨어진 단어 위에 서면 닿아서 자동으로 줍는다');
   assertTokenInvariant(assert, g, 11);
+  // A가 C의 시작 단어만 다시 내려놓는다
+  g.handle('A', { t: 'drop', token: 't3' });
+  run(g, 0.5);
   // 남은 사람만으로 클리어 조건 판단
   place(g, 'cargo', [0, 1.6, 34]);
   place(g, 'A', [-1.5, 1.6, 34]);
   place(g, 'B', [1.5, 1.6, 34]);
   run(g, 2.2);
   assert.equal(g.goal.cleared, true);
-  // 다시 들어오면 떨어져 있던 자기 시작 단어(t3)만 인벤토리로, <파이어볼>은 월드에 그대로
+  // 다시 들어오면 떨어져 있던 자기 시작 단어(t3)만 인벤토리로, 다른 사람이 가진 <파이어볼>은 그대로
+  assert.equal(g.token('t3').owner, null);
   g.addPlayer('C');
   assertTokenInvariant(assert, g, 11);
   assert.equal(g.tokens.find((t) => t.id === 't3').owner, 'C');
-  assert.equal(g.tokens.find((t) => t.id === 'w1').owner, null);
+  assert.notEqual(g.tokens.find((t) => t.id === 'w1').owner, 'C');
 });
 
 test('다른 사람이 가져간 시작 단어는 재참가해도 뺏지 않는다', () => {
@@ -75,9 +80,8 @@ test('다른 사람이 가져간 시작 단어는 재참가해도 뺏지 않는�
   place(g, 'D', [0, 0, 8]);
   place(g, 'B', [0, 0, 9]);
   run(g, 0.2);
-  g.handle('D', { t: 'drop', token: 't4' }); // D의 <들기>
-  run(g, 0.3);
-  assert.ok(g.handle('B', { t: 'pickup' }).ok);
+  g.handle('D', { t: 'drop', token: 't4' }); // D의 <들기>를 앞(B 쪽)에 떨군다
+  run(g, 1);
   assert.equal(g.tokens.find((t) => t.id === 't4').owner, 'B');
   g.removePlayer('D');
   g.addPlayer('D');

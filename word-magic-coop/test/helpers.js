@@ -41,11 +41,13 @@ export function cast(g, casterId, targetId = null, { mode, dir } = {}) {
   return g.handle(casterId, { t: 'cast', mode: mode || (targetId ? 'AIM' : 'SELF'), ...aim });
 }
 
-// 월드의 단어를 줍는다(그 자리로 가서 E)
+// 월드의 단어를 줍는다(그 자리로 가면 닿아서 자동으로 주워진다. 안 되면 E)
 export function grab(g, pid, tokenId) {
   const t = g.token(tokenId);
+  if (t.owner === pid) return { ok: true, token: tokenId }; // 옆 단어를 주우며 이미 닿아서 주웠다
   place(g, pid, [t.pos[0], t.pos[1], t.pos[2] - 0.5]);
   run(g, 0.1);
+  if (t.owner === pid) return { ok: true, token: tokenId };
   return g.handle(pid, { t: 'pickup' });
 }
 

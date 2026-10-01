@@ -194,11 +194,11 @@ test('T5: <큰>은 0/1/3개에 따라 결과가 다르고, 가진 것보다 많�
   const [r0, r1, r3] = [radiusWith(0), radiusWith(1), radiusWith(3)];
   assert.ok(r0 < r1 && r1 < r3, `반지름 ${r0} < ${r1} < ${r3}`);
   assert.equal(g.handle('A', { t: 'mod', word: 'BIG', count: 9 }).count, 3, '가진 개수까지만');
-  // 하나를 B에게 넘기면(내려놓기 → 줍기) A는 2개, B는 1개
+  // 하나를 B에게 던져 주면(Q → 닿아서 줍기) A는 2개, B는 1개
   place(g, 'A', [-5, 0, 8]); place(g, 'B', [-5, 0, 9.2]); run(g, 0.3); // 출발 구역 가운데의 <당기기> 단어를 피해서
-  g.handle('A', { t: 'drop', token: 'w4' });
-  run(g, 0.3);
-  assert.ok(g.handle('B', { t: 'pickup' }).ok);
+  assert.ok(g.handle('A', { t: 'throw', token: 'w4', dir: [0, 0, 1] }).ok);
+  run(g, 1);
+  assert.equal(g.token('w4').owner, 'B');
   assert.equal(g.modCounts('A').BIG, 2);
   assert.equal(g.modCounts('B').BIG, 1);
   assertTokenInvariant(assert, g, 10);
@@ -281,9 +281,9 @@ test('유지: 넘긴 <세게>로는 계속 강화할 수 없고(무거운 물체
 test('유지: 낙하 복구·단어 복구·동시 줍기·재시작에서 소유권과 토큰 수 보존', () => {
   const g = newGame();
   place(g, 'A', [-5.5, 0, 16.5]); place(g, 'B', [-4.5, 0, 16.5]); run(g, 0.2);
-  const ra = g.handle('A', { t: 'pickup' });
-  const rb = g.handle('B', { t: 'pickup' });
-  assert.equal([ra.ok, rb.ok].filter(Boolean).length, 1, '같은 틱에 한 사람만 주울 수 있다');
+  const w1 = g.token('w1');
+  assert.ok(w1.owner === 'A' || w1.owner === 'B', '둘이 동시에 닿아도 한 사람만 줍는다');
+  assert.equal(g.events.filter((e) => e.k === 'pickup' && e.token === 'w1').length, 1);
   assertTokenInvariant(assert, g, 10);
   // 사람·짐이 떨어지면 같은 지면의 안전 지점으로
   place(g, 'B', [7.2, 0, 26]); place(g, 'A', [5.5, 0, 26]); run(g, 0.3);

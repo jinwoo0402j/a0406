@@ -109,11 +109,15 @@ export class Sfx {
       case 'hit': // 뾰잉 — 맞고 납작
         this.tone({ freq: 460, to: 190, dur: 0.16, type: 'triangle', vol: v(0.25) });
         break;
+      case 'throw': // 휙 — 단어를 던짐
+        this.noise({ dur: 0.16, vol: v(0.3), freq: 1800, to: 700, q: 1.2 });
+        this.tone({ freq: 520, to: 760, dur: 0.1, type: 'triangle', vol: v(0.12) });
+        break;
       case 'pickup': // 딩동
         this.tone({ freq: 660, dur: 0.12, type: 'sine', vol: v(0.25) });
         this.tone({ freq: 990, dur: 0.18, type: 'sine', vol: v(0.22), delay: 0.08 });
         break;
-      case 'give': // 도미솔
+      case 'give': // 도미솔 — 친구가 던져 준 단어를 받음
         [523, 659, 784].forEach((f, i) => this.tone({ freq: f, dur: 0.14, type: 'triangle', vol: v(0.22), delay: i * 0.07 }));
         break;
       case 'release': // 보호막

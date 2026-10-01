@@ -88,7 +88,13 @@ export const TUNING = {
   // 단어
   pickupRadius: 2,
   dropForward: 0.9,
-  giveRadius: 3, // 건네주기: 이 거리 안의, 지형에 가리지 않은 친구에게 바로 넘긴다 [임시]
+  // 마인크래프트식 주고받기: Q로 던지고, 땅에 있는 단어는 몸에 닿으면 자동으로 줍는다 [임시]
+  throwSpeed: 6, // 시선 방향으로 던지는 수평 속도 m/s
+  throwUp: 3.5, // 던질 때 위로 m/s (≈ 3~4m 앞에 떨어진다)
+  tokenFriction: 14, // 땅에서 미끄러지다 멈추는 감속 m/s²
+  autoPickupRadius: 0.9, // 몸 중심에서 이 수평 거리 안이면 줍는다
+  pickupDelayOwn: 1.2, // 던지거나 내려놓은 사람은 잠깐 다시 못 줍는다 s
+  pickupDelayOther: 0.2, // 다른 사람도 손을 떠난 직후 잠깐은 못 줍는다 s
 
   // 목표
   goalHoldTime: 2,

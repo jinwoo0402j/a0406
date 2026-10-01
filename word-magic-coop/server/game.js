@@ -63,6 +63,11 @@ export class Game {
       owner,
       pos: owner ? null : [...d.pos],
       vy: 0,
+      vel: [0, 0], // 던진 단어의 수평 속도
+      lastOwner: null, // 마지막으로 던지거나 내려놓은 사람(주고받기 기록용)
+      noPickupBy: null, // 이 사람은 noPickupUntil까지 못 줍는다
+      noPickupUntil: 0,
+      anyPickupAt: 0, // 누구든 이때부터 주울 수 있다
       lastSafe: d.pos ? { ground: this.groundUnder(d.pos), pos: [...d.pos] } : null,
       acquiredAt: 0,
     };
@@ -91,7 +96,7 @@ export class Game {
       if (d.seat !== pid) continue;
       const t = this.token(d.id);
       if (!t) this.tokens.push(this.makeToken(d, pid));
-      else if (!t.owner) { t.owner = pid; t.pos = null; t.vy = 0; }
+      else if (!t.owner) { t.owner = pid; t.pos = null; t.vy = 0; t.vel = [0, 0]; }
     }
     this.players[pid] = this.makePlayer(pid);
     this.seats = SEAT_IDS.filter((id) => this.players[id]);
@@ -280,7 +285,7 @@ export class Game {
       case 'liftEnd': return this.onEndCast(pid); // 이전 이름
       case 'pickup': return this.onPickup(pid);
       case 'drop': return this.onDrop(pid, msg);
-      case 'give': return this.onGive(pid, msg);
+      case 'throw': return this.onThrow(pid, msg);
       case 'equip': return this.onEquip(pid, msg);
       case 'mod': return this.onMod(pid, msg);
       case 'release': return this.onRelease(pid);
@@ -660,6 +665,7 @@ export class Game {
     }
   }
 
+  // E 줍기(예전 방식, 테스트·보조용). 지금은 몸에 닿으면 자동으로 줍는다(stepAutoPickup).
   onPickup(pid) {
     const b = this.body(pid);
     let best = null;
@@ -673,12 +679,19 @@ export class Game {
       this.emit({ k: 'pickupFail', to: pid, reason: '가까이에 주울 단어가 없어요' });
       return { ok: false };
     }
-    const t = best.t;
+    this.collectToken(pid, best.t);
+    return { ok: true, token: best.t.id };
+  }
+
+  // 월드의 단어를 갖는다. 다른 사람이 던진(내려놓은) 것이면 주고받기로 기록한다.
+  collectToken(pid, t) {
     t.pos = null;
     t.vy = 0;
+    t.vel = [0, 0];
+    const from = t.lastOwner && t.lastOwner !== pid ? t.lastOwner : null;
+    t.lastOwner = null;
     const equipped = this.receiveToken(pid, t);
-    this.emit({ k: 'pickup', by: pid, token: t.id, word: t.word, equipped });
-    return { ok: true, token: t.id };
+    this.emit({ k: 'pickup', by: pid, token: t.id, word: t.word, equipped, from });
   }
 
   // 단어를 갖게 한다. 효과 칸이 비어 있으면 바로 장착, 수식은 바로 붙인다(편집창에서 개수를 줄일 수 있다).
@@ -694,49 +707,50 @@ export class Game {
     return true;
   }
 
-  // 장착 칸에서 뺀다(넘기거나 내려놓을 때)
+  // 장착 칸에서 뺀다(던지거나 내려놓을 때)
   unequipToken(pid, tokenId) {
     const p = this.players[pid];
     if (p.slots.effect === tokenId) p.slots.effect = null;
     p.slots.mods = p.slots.mods.filter((id) => id !== tokenId);
   }
 
-  // 건네주기: 가까이 있는 친구에게 단어를 바로 넘긴다(내려놓고 줍는 과정 없이) [제안안].
-  // msg.to가 있으면 그 친구에게, 없으면 가장 가까운 친구에게. 받는 사람은 주울 때처럼 장착된다.
-  onGive(pid, msg) {
-    const t = this.token(msg.token);
-    if (!t || t.owner !== pid) return { ok: false };
-    const me = this.body(pid);
-    const near = this.seats
-      .filter((o) => o !== pid)
-      .map((o) => ({ o, d: dist(this.body(o).pos, me.pos) }))
-      .filter((c) => c.d <= this.T.giveRadius && !segmentBlocked(me.pos, this.body(c.o).pos, this.statics))
-      .sort((a, b) => a.d - b.d);
-    const to = msg.to ? near.find((c) => c.o === msg.to)?.o : near[0]?.o;
-    if (!to) {
-      this.emit({ k: 'giveFail', to: pid, reason: `건네줄 친구가 가까이 없어요 (${this.T.giveRadius}m 안)` });
-      return { ok: false };
-    }
+  // 손에서 단어를 놓아 월드로: 몸 앞에서 vel(수평)·vy(위)로 날아간다. 놓은 사람은 잠깐 다시 못 줍는다.
+  releaseToken(pid, t, fwd, speed, up) {
+    const T = this.T;
+    const b = this.body(pid);
     this.unequipToken(pid, t.id);
-    const equipped = this.receiveToken(to, t);
-    this.emit({ k: 'give', by: pid, target: to, token: t.id, word: t.word, equipped });
-    return { ok: true, to };
+    let pos = [b.pos[0] + fwd[0] * (b.half[0] + 0.15), b.pos[1] + 0.2, b.pos[2] + fwd[2] * (b.half[2] + 0.15)];
+    if (segmentBlocked(b.pos, pos, this.statics)) pos = [b.pos[0], b.pos[1] + 0.2, b.pos[2]];
+    t.owner = null;
+    t.pos = pos;
+    t.vel = [fwd[0] * speed, fwd[2] * speed];
+    t.vy = up;
+    t.lastOwner = pid;
+    t.noPickupBy = pid;
+    t.noPickupUntil = this.time + T.pickupDelayOwn;
+    t.anyPickupAt = this.time + T.pickupDelayOther;
+    // 떨어지면 놓은 사람이 마지막으로 서 있던 지면 기준으로 복구한다
+    if (b.lastSafe) t.lastSafe = { ground: b.lastSafe.ground, pos: [...b.lastSafe.pos] };
   }
 
+  // 던지기(Q, 마인크래프트식): 고른 단어 하나를 시선 방향으로 던진다. 친구가 걸어가 닿으면 주워진다.
+  onThrow(pid, msg) {
+    const t = this.token(msg.token);
+    if (!t || t.owner !== pid) return { ok: false };
+    const b = this.body(pid);
+    let fwd = validVec(msg.dir) ? normalize([msg.dir[0], 0, msg.dir[2]]) : [0, 0, 0];
+    if (!fwd[0] && !fwd[2]) fwd = [Math.sin(b.yaw), 0, Math.cos(b.yaw)];
+    this.releaseToken(pid, t, fwd, this.T.throwSpeed, this.T.throwUp);
+    this.emit({ k: 'throw', by: pid, token: t.id, word: t.word });
+    return { ok: true };
+  }
+
+  // 내려놓기(편집창): 바로 앞에 살짝 떨군다
   onDrop(pid, msg) {
     const t = this.token(msg.token);
     if (!t || t.owner !== pid) return { ok: false };
     const b = this.body(pid);
-    this.unequipToken(pid, t.id); // 장착 칸은 비운다
-    const fwd = [Math.sin(b.yaw), Math.cos(b.yaw)];
-    const base = [b.pos[0], bottomOf(b) + 0.3, b.pos[2]];
-    let pos = [base[0] + fwd[0] * this.T.dropForward, base[1], base[2] + fwd[1] * this.T.dropForward];
-    if (segmentBlocked(base, pos, this.statics)) pos = base;
-    t.owner = null;
-    t.pos = pos;
-    t.vy = 0;
-    // 떨어지면 내려놓은 사람이 마지막으로 서 있던 지면 기준으로 복구한다
-    if (b.lastSafe) t.lastSafe = { ground: b.lastSafe.ground, pos: [...b.lastSafe.pos] };
+    this.releaseToken(pid, t, [Math.sin(b.yaw), 0, Math.cos(b.yaw)], 2.5, 1); // 줍는 거리(0.9m)보다 조금 멀리
     this.emit({ k: 'drop', by: pid, token: t.id, word: t.word });
     return { ok: true };
   }
@@ -805,6 +819,7 @@ export class Game {
     }
     this.stepProjectiles(dt);
     this.stepTokens(dt);
+    this.stepAutoPickup();
     this.stepGoal(dt);
     this.recordHistory();
   }
@@ -885,13 +900,27 @@ export class Game {
     });
   }
 
+  // 월드의 단어: 던진 단어는 수평으로 날아가다 지형에 막히면 서고, 땅에서는 미끄러지다 멈춘다.
   stepTokens(dt) {
     for (const t of this.tokens) {
       if (t.owner || !t.pos) continue;
+      if (t.vel[0] || t.vel[1]) {
+        const np = [t.pos[0] + t.vel[0] * dt, t.pos[1], t.pos[2] + t.vel[1] * dt];
+        const m = 0.08;
+        const blocked = this.statics.some((s) => np[0] > s.min[0] - m && np[0] < s.max[0] + m && np[2] > s.min[2] - m && np[2] < s.max[2] + m
+          && np[1] > s.min[1] && np[1] < s.max[1] - 1e-3);
+        if (blocked) t.vel = [0, 0];
+        else { t.pos[0] = np[0]; t.pos[2] = np[2]; }
+      }
       const floorY = this.surfaceBelow(t.pos);
-      if (floorY !== null && t.pos[1] <= floorY + 1e-4) {
+      if (floorY !== null && t.pos[1] <= floorY + 1e-4 && t.vy <= 0) {
         t.pos[1] = floorY;
         t.vy = 0;
+        const sp = Math.hypot(t.vel[0], t.vel[1]);
+        if (sp > 0) {
+          const ns = Math.max(0, sp - this.T.tokenFriction * dt);
+          t.vel = [t.vel[0] * (ns / sp), t.vel[1] * (ns / sp)];
+        }
         const g = this.groundUnder(t.pos);
         if (g) t.lastSafe = { ground: g, pos: [...t.pos] };
         continue;
@@ -903,8 +932,27 @@ export class Game {
       if (t.pos[1] < this.T.killY) {
         t.pos = this.safePoint(t.lastSafe, [0, 0.3, 0], null);
         t.vy = 0;
+        t.vel = [0, 0];
         this.emit({ k: 'tokenRecover', token: t.id, word: t.word });
       }
+    }
+  }
+
+  // 자동 줍기: 땅에 있는 단어에 몸이 닿으면 가장 가까운 사람이 줍는다(놓은 사람은 잠깐 뒤에).
+  stepAutoPickup() {
+    const T = this.T;
+    for (const t of this.tokens) {
+      if (t.owner || !t.pos || this.time < t.anyPickupAt) continue;
+      let best = null;
+      for (const pid of this.seats) {
+        if (pid === t.noPickupBy && this.time < t.noPickupUntil) continue;
+        const b = this.body(pid);
+        const dh = Math.hypot(t.pos[0] - b.pos[0], t.pos[2] - b.pos[2]);
+        const bot = bottomOf(b);
+        if (dh > T.autoPickupRadius || t.pos[1] < bot - 0.3 || t.pos[1] > bot + b.half[1] * 2 + 0.3) continue;
+        if (!best || dh < best.dh) best = { pid, dh };
+      }
+      if (best) this.collectToken(best.pid, t);
     }
   }
 

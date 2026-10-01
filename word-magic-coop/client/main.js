@@ -192,8 +192,8 @@ function send(msg) {
 function updateWho() {
   $('who-chip').style.background = SEAT_COLOR[S.me];
   const other = S.me === 'A' ? 'B' : 'A';
-  $('who-name').textContent = S.solo ? `플레이어 ${S.me} 조작 중 · Q로 ${other} 전환` : `플레이어 ${S.me} (나)`;
-  $('keys').textContent = `WASD 이동 · Space 점프 · 좌클릭 시전 · ${END_CAST_KEY} 시전 종료 · F 대상 모드 · E 줍기 · R 해제 · Tab 편집 · M 소리${S.solo ? ' · Q 캐릭터 전환' : ''}`;
+  $('who-name').textContent = S.solo ? `플레이어 ${S.me} 조작 중 · C로 ${other} 전환` : `플레이어 ${S.me} (나)`;
+  $('keys').textContent = `WASD 이동 · Space 점프 · 좌클릭 시전 · ${END_CAST_KEY} 시전 종료 · F 대상 모드 · 1~9 단어 고르기 · Q 던지기 · E 가방 · R 해제 · M 소리${S.solo ? ' · C 캐릭터 전환' : ''}`;
 }
 
 function switchCharacter() {
@@ -355,6 +355,12 @@ function interpolated() {
       speed: jump ? 0 : Math.hypot(y.p[0] - x.p[0], y.p[2] - x.p[2]) / dtS,
     });
   }
+  // 월드의 단어: 던져서 날아가는 것도 부드럽게(두 스냅숏 모두 땅에 있을 때 보간)
+  const ak = new Map((a.k || []).map((x) => [x.id, x]));
+  S.tokensView = (b.k || []).map((y) => {
+    const x = ak.get(y.id);
+    return x?.p && y.p ? { ...y, p: [lerp(x.p[0], y.p[0], k), lerp(x.p[1], y.p[1], k), lerp(x.p[2], y.p[2], k)] } : y;
+  });
   // 투사체: 두 스냅숏 모두에 있으면 보간, 새로 생긴 것은 최신 위치
   const apr = new Map((a.pr || []).map((x) => [x.id, x]));
   S.projectiles = (b.pr || []).map((y) => {
@@ -411,10 +417,10 @@ function playSfx(e) {
       break;
     case 'liftEnd': if (e.reason === 'released') sfx.play('liftEnd', k(at(e.target))); break;
     case 'boom': sfx.play('boom', k(e.pos)); break;
-    case 'pickup': sfx.play('pickup', k(at(e.by))); break;
-    case 'give': sfx.play('give', k(at(e.by))); break;
+    case 'pickup': sfx.play(e.from ? 'give' : 'pickup', k(at(e.by))); break;
+    case 'throw': sfx.play('throw', k(at(e.by))); break;
     case 'release': sfx.play('release', k(at(e.by))); break;
-    case 'castFail': case 'giveFail': case 'pickupFail': sfx.play('fail'); break;
+    case 'castFail': case 'pickupFail': sfx.play('fail'); break;
     case 'clear': sfx.play('clear'); break;
     default: break;
   }
@@ -466,8 +472,10 @@ function recordStats(e) {
         if (e.by && h.id !== e.by) countTargets(statOf(e.by), e.by, [h.id]);
       }
       break;
-    case 'pickup': statOf(e.by).pickup += 1; break;
-    case 'give': statOf(e.by).give += 1; break;
+    case 'pickup':
+      statOf(e.by).pickup += 1;
+      if (e.from) statOf(e.from).give += 1; // 던진 단어를 친구가 주움 = 건네줌
+      break;
     case 'release': T.release += 1; break;
     case 'recover': if (SEAT_IDS.includes(e.id)) T.fall += 1; break;
     case 'clear': if (!T.clearedAt) T.clearedAt = performance.now(); break;
@@ -485,7 +493,7 @@ function summaryText() {
     if (!st) continue;
     const total = Object.values(st.casts).reduce((a, b) => a + b, 0);
     const kinds = Object.entries(st.casts).map(([k, n]) => `${k} ${n}`).join(', ');
-    lines.push(`${pid}: 주문 ${total}번${kinds ? ` (${kinds})` : ''} · 친구에게 ${st.friend} · 물건·적에게 ${st.object} · 나에게 ${st.self} · 단어 줍기 ${st.pickup} · 건네기 ${st.give}`);
+    lines.push(`${pid}: 주문 ${total}번${kinds ? ` (${kinds})` : ''} · 친구에게 ${st.friend} · 물건·적에게 ${st.object} · 나에게 ${st.self} · 단어 줍기 ${st.pickup} · 건네준 단어 ${st.give}`);
   }
   lines.push(`같이 들기 ${T.colift}번 · 친구가 파이어볼에 맞음 ${T.friendFire}번 · 적 명중 ${T.enemyHit}번 · R로 풀기 ${T.release}번 · 떨어짐 ${T.fall}번`);
   return lines.join('\n');
@@ -498,7 +506,7 @@ function onEvent(e) {
   if (S.recent.length > 30) S.recent.shift();
   if ((e.k === 'cast' || e.k === 'liftStart') && e.by === S.me) S.did.cast = true;
   if (e.k === 'pickup' && e.by === S.me) S.did.pickup = true;
-  if (e.k === 'give' && (e.by === S.me || e.target === S.me)) S.did.share = true;
+  if (e.k === 'pickup' && e.from && (e.by === S.me || e.from === S.me)) S.did.share = true;
   switch (e.k) {
     case 'cast': {
       const pos = new Map();
@@ -555,15 +563,18 @@ function onEvent(e) {
       toast(e.reason);
       break;
     case 'pickup':
-      log(`${whoSubj(e.by)} ${wlabel(e.word)} 단어를 주웠어요${e.equipped ? ' (바로 장착)' : ''}`);
+      if (e.from) {
+        log(`${whoSubj(e.by)} ${who(e.from)}의 ${wlabel(e.word)}을(를) 받았어요`);
+        if (e.by === S.me) toast(`${who(e.from)}에게서 ${wlabel(e.word)}을(를) 받았어요${e.equipped ? ' (바로 장착)' : ''}`, 'info');
+      } else {
+        log(`${whoSubj(e.by)} ${wlabel(e.word)} 단어를 주웠어요${e.equipped ? ' (바로 장착)' : ''}`);
+      }
+      break;
+    case 'throw':
+      log(`${whoSubj(e.by)} ${wlabel(e.word)}을(를) 던졌어요`);
       break;
     case 'pickupFail':
-    case 'giveFail':
       toast(e.reason);
-      break;
-    case 'give':
-      log(`${whoSubj(e.by)} ${who(e.target)}에게 ${wlabel(e.word)}을(를) 건넸어요`);
-      if (e.target === S.me) toast(`${who(e.by)}에게서 ${wlabel(e.word)}을(를) 받았어요${e.equipped ? ' (바로 장착)' : ''}`, 'info');
       break;
     case 'drop':
       log(`${whoSubj(e.by)} ${wlabel(e.word)} 단어를 내려놓았어요`);
@@ -700,9 +711,11 @@ window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   S.keys.add(e.code);
   if (e.code === 'Space') { e.preventDefault(); sendInput(true); }
-  if (e.code === 'KeyE') send({ t: 'pickup' });
+  if (e.code === 'KeyE') { toggleEditor(); return; } // 가방(마인크래프트처럼 E)
+  if (/^Digit[1-9]$/.test(e.code)) selectSlot(Number(e.code.slice(5)) - 1);
   if (e.code === 'KeyR') send({ t: 'release' });
-  if (e.code === 'KeyQ') { endCast(); switchCharacter(); }
+  if (e.code === 'KeyQ') throwSelected();
+  if (e.code === 'KeyC' && S.solo) { endCast(); switchCharacter(); }
   if (e.code === 'KeyF') cycleMode();
   if (e.code === 'KeyH') S.guideOff = !S.guideOff;
   if (e.code === 'KeyM') toast(sfx.toggle() ? '소리 끔 (M)' : '소리 켬 (M)', 'info');
@@ -722,6 +735,10 @@ document.addEventListener('pointerlockchange', () => {
   S.locked = document.pointerLockElement === $('view');
   if (!S.locked) endCast();
 });
+window.addEventListener('wheel', (e) => {
+  if (S.phase !== 'playing' || S.editorOpen || !S.locked) return;
+  stepSlot(e.deltaY > 0 ? 1 : -1);
+}, { passive: true });
 document.addEventListener('mousemove', (e) => {
   if (!S.locked || S.editorOpen) return; // 편집창을 열면 카메라 회전을 막는다
   S.yaw -= e.movementX * SENS;
@@ -736,27 +753,10 @@ function tokenWord(id) {
   return S.latest?.k.find((t) => t.id === id)?.w;
 }
 
-// 건네줄 수 있는 가장 가까운 친구(서버와 같은 규칙: 거리 + 지형에 가리지 않음)
-function nearestFriend() {
-  const me = S.frame?.bodies.get(S.me);
-  if (!me) return null;
-  let best = null;
-  for (const id of Object.keys(S.latest?.p || {})) {
-    if (id === S.me) continue;
-    const b = S.frame.bodies.get(id);
-    if (!b) continue;
-    const d = Math.hypot(b.p[0] - me.p[0], b.p[1] - me.p[1], b.p[2] - me.p[2]);
-    if (d > TUNING.giveRadius || segmentBlocked(me.p, b.p, LEVEL.statics)) continue;
-    if (!best || d < best.d) best = { id, d };
-  }
-  return best?.id || null;
-}
-
 function renderEditor() {
   const ps = mySnap();
   if (!ps) return;
-  const friend = nearestFriend();
-  const key = JSON.stringify([ps.e, ps.m, ps.inv, friend]);
+  const key = JSON.stringify([ps.e, ps.m, ps.inv]);
   if (key === S.editorKey) return;
   S.editorKey = key;
   // 효과 칸(1개)
@@ -817,14 +817,7 @@ function renderEditor() {
     drop.type = 'button';
     drop.textContent = '내려놓기';
     drop.onclick = () => send({ t: 'drop', token: id });
-    const give = document.createElement('button');
-    give.className = 'ghost give';
-    give.type = 'button';
-    give.textContent = friend ? `${friend}에게 주기` : '주기';
-    give.disabled = !friend;
-    give.title = friend ? `${friend}에게 바로 넘겨요` : `건네줄 친구가 ${TUNING.giveRadius}m 안에 없어요`;
-    give.onclick = () => send({ t: 'give', token: id, to: friend });
-    meta.append(give, drop);
+    meta.append(drop);
     card.append(word, meta);
     inv.append(card);
   }
@@ -984,6 +977,63 @@ function buildPreview(bodies, rig) {
   };
 }
 
+// ------------------------------------------------------------------ 핫바(마인크래프트식)
+// 가진 단어를 아래 칸에 보여 준다. 효과는 한 칸씩, 수식은 같은 단어끼리 한 칸에 겹친다.
+// 1~9·휠로 고르고, 효과 칸을 고르면 그 효과를 손에 든다(장착). Q로 고른 단어 하나를 던진다.
+function hotbarSlots(ps) {
+  const slots = [];
+  const modIndex = new Map();
+  for (const id of ps?.inv || []) {
+    const w = tokenWord(id);
+    if (WORDS[w].kind === KIND.EFFECT) slots.push({ key: id, word: w, tokens: [id], effect: true });
+    else {
+      if (!modIndex.has(w)) { modIndex.set(w, slots.length); slots.push({ key: `mod:${w}`, word: w, tokens: [], effect: false }); }
+      slots[modIndex.get(w)].tokens.push(id);
+    }
+  }
+  return slots.slice(0, 9);
+}
+
+function selectSlot(i) {
+  const ps = mySnap();
+  const slots = hotbarSlots(ps);
+  if (!slots.length) return;
+  const s = slots[(i + slots.length) % slots.length];
+  S.slotKey = s.key;
+  if (s.effect && ps.e !== s.key) send({ t: 'equip', slot: 'effect', token: s.key });
+  updateHotbar(ps);
+}
+
+function stepSlot(d) {
+  const slots = hotbarSlots(mySnap());
+  const cur = slots.findIndex((x) => x.key === S.slotKey);
+  selectSlot((cur < 0 ? 0 : cur) + d);
+}
+
+function throwSelected() {
+  const ps = mySnap();
+  const s = hotbarSlots(ps).find((x) => x.key === S.slotKey);
+  if (!s) { toast('던질 단어를 1~9로 골라요', 'info'); return; }
+  const rig = currentRig();
+  send({ t: 'throw', token: s.tokens[s.tokens.length - 1], dir: rig ? rig.dir.map((v) => Math.round(v * 1000) / 1000) : undefined });
+}
+
+function updateHotbar(ps) {
+  const slots = hotbarSlots(ps);
+  // 장착한 효과가 바뀌면(줍자마자 장착, 가방에서 장착) 선택도 따라간다
+  if (ps.e !== S.lastEquipped) { S.lastEquipped = ps.e; if (ps.e) S.slotKey = ps.e; }
+  if (!slots.some((x) => x.key === S.slotKey)) S.slotKey = ps.e || slots[0]?.key || null;
+  const html = slots.map((x, i) => {
+    const n = x.effect ? 1 : x.tokens.length;
+    const cls = ['hb-slot', x.key === S.slotKey ? 'sel' : '', x.effect && ps.e === x.key ? 'eq' : ''].join(' ');
+    return `<div class="${cls}"><span class="hb-num">${i + 1}</span><span class="word ${x.effect ? 'action' : 'mod'}">${WORDS[x.word].label}</span>${n > 1 ? `<span class="hb-count">×${n}</span>` : ''}</div>`;
+  }).join('') || '<div class="hb-empty">단어 없음 · 바닥의 단어 위로 걸어가면 주워요</div>';
+  if ($('hotbar').dataset.html !== html) {
+    $('hotbar').dataset.html = html;
+    $('hotbar').innerHTML = html;
+  }
+}
+
 // '처음 해보기' 안내: 기획서의 기본 흐름(단어 발견 → 주문 구성 → 시험·교환 → 함께 도착)으로 이끈다
 function guideText(ps) {
   if (S.latest?.g?.c) return '';
@@ -991,12 +1041,12 @@ function guideText(ps) {
   const step = (n, text) => `처음 해보기 ${n}/5 · ${text}`;
   if (!ew) {
     const hasEffect = ps.inv.some((id) => WORDS[tokenWord(id)].kind === KIND.EFFECT);
-    return step(1, hasEffect ? 'Tab을 눌러 효과 단어를 장착해요' : '바닥의 단어에 다가가 E로 주워요');
+    return step(1, hasEffect ? '1~9로 효과 단어 칸을 골라 손에 들어요' : '바닥의 단어 위로 걸어가면 주워져요');
   }
   if (!S.did.cast) return step(1, `좌클릭으로 <${WORDS[ew].label}>을(를) 친구나 물건에 써 봐요`);
   if (!S.did.mode) return step(2, 'F로 대상 모드를 바꿔 같은 주문을 다르게 써 봐요 (본인·주변)');
-  if (!S.did.pickup) return step(3, '둘러보며 새 단어를 찾아 E로 주워요 · 주문이 달라져요');
-  if (!S.did.share) return step(4, `Tab에서 친구에게 단어를 건네 봐요 (${TUNING.giveRadius}m 안)`);
+  if (!S.did.pickup) return step(3, '둘러보며 새 단어를 찾아 걸어가 주워요 · 주문이 달라져요');
+  if (!S.did.share) return step(4, '1~9로 단어를 고르고 Q로 친구에게 던져 줘 봐요');
   return '목표: 짐(★)과 모두가 단차 위 도착 구역에 2초 함께 있기';
 }
 
@@ -1073,15 +1123,7 @@ function updateHud(frame) {
   }
   $('badges').innerHTML = badges.join('');
 
-  // 줍기 안내
-  const pr = $('prompt');
-  if (frame.pickable) {
-    const t = S.latest.k.find((x) => x.id === frame.pickable);
-    pr.textContent = `E  ${wlabel(t.w)} 줍기`;
-    pr.classList.add('show');
-  } else {
-    pr.classList.remove('show');
-  }
+  updateHotbar(ps);
 
   // 도착 구역
   const g = S.latest.g;
@@ -1145,7 +1187,7 @@ function frame() {
   const preview = S.editorOpen ? null : buildPreview(bodies, rig);
   const f = {
     bodies,
-    tokens: S.latest.k,
+    tokens: S.tokensView || S.latest.k,
     me: S.me,
     preview,
     nearby: (S.mode === 'NEAR' && preview?.radius) || (preview?.kind === 'blast' ? preview.radius : 0),
@@ -1225,4 +1267,7 @@ window.__wm = {
   joinByCode,
   get roomCode() { return $('room-code').textContent; },
   summaryText,
+  selectSlot,
+  throwSelected,
+  get hotbar() { return hotbarSlots(mySnap()).map((x) => ({ key: x.key, word: x.word, n: x.tokens.length, sel: x.key === S.slotKey })); },
 };
