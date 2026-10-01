@@ -50,7 +50,24 @@ const P = {
   out: '<path d="M14 4H6v16h8"/><path d="M11 12h10M17 8l4 4-4 4"/>',
   far: '<circle cx="5" cy="12" r="2" fill="currentColor"/><path d="M9 12h2M14 12h2"/><circle cx="20" cy="12" r="2"/>',
   boom: '<path d="M12 2l2 5 5-2-2 5 5 2-5 2 2 5-5-2-2 5-2-5-5 2 2-5-5-2 5-2-2-5 5 2z"/>',
+  rock: '<path d="M4 18l2-7 5-4 6 2 3 6-2 3z"/>',
+  box: '<rect x="4" y="5" width="16" height="15" rx="1.5"/><path d="M4 5l16 15M20 5 4 20"/>',
+  dummy: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/>',
+  play: '<path d="M8 5v14l11-7z" fill="currentColor"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.1.9-1.1 1.8"/><circle cx="12" cy="17" r="1" fill="currentColor"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  split: '<path d="M3 12h6"/><path d="M9 12l9-6M9 12h9M9 12l9 6"/><circle cx="18" cy="6" r="1.4" fill="currentColor"/><circle cx="18" cy="12" r="1.4" fill="currentColor"/><circle cx="18" cy="18" r="1.4" fill="currentColor"/>',
+  gather: '<circle cx="5" cy="6" r="1.4" fill="currentColor"/><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="5" cy="18" r="1.4" fill="currentColor"/><path d="M6 6l9 6M6 12h9M6 18l9-6"/><path d="M15 12h6"/>',
+  dots: '<circle cx="5" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="19" cy="12" r="2" fill="currentColor"/>',
+  grab: '<ellipse cx="12" cy="14" rx="6" ry="5"/><path d="M8 9.5V7M11 9V6M14 9V6.5M16.5 10V8"/>',
 };
+
+export const ICON_NAMES = Object.keys(P);
+
+// 따로 쓰는 SVG 문서(3D 표지판·손에 든 단어처럼 캔버스에 그릴 때)
+export function iconSVG(name, color = '#ffffff', width = 2.4) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="96" height="96" color="${color}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round">${P[name] || ''}</svg>`;
+}
 
 export function icon(name, cls = '') {
   return `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${P[name] || ''}</svg>`;

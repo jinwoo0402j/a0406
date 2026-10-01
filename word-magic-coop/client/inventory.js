@@ -13,14 +13,6 @@ const isMod = (w) => WORDS[w]?.kind === KIND.MOD;
 const isEffect = (w) => WORDS[w]?.kind === KIND.EFFECT;
 const sameList = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 
-export const WORD_DESC = {
-  PUSH: '효과 · 즉시 밀어내요',
-  PULL: '효과 · 내 앞까지 끌어와요 (지형이면 내가 끌려가요)',
-  LIFT: '효과 · 시선을 따라 들고 다녀요 (우클릭으로 놓기)',
-  FIREBALL: '효과 · 날아가 맞은 곳에서 터져요',
-  BIG: '수식 · 크기·범위가 커져요',
-  STRONG: '수식 · 힘·위력이 세져요',
-};
 
 export class Inventory {
   constructor(modSlots) {

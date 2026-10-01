@@ -256,3 +256,42 @@ kbd.kc { display: inline-grid; place-items: center; min-width: 1.6em; height: 1.
 .goal-items span.gi.pl.in { box-shadow: 0 0 0 3px var(--ok); }
 /* 끌어서 나눠 놓는 중인 칸 */
 .mc-slot.drag { background: #e3f6f1; box-shadow: inset 0 0 0 3px var(--teal); }
+
+/* ---------------- 글자 줄이기: 단어는 색 동그라미 + 그림, 이름은 주문 칸에만 ---------------- */
+.wt.ico { padding: 0; width: 1.7em; height: 1.7em; justify-content: center; border-radius: 50%; }
+.wt.ico .ic { margin: 0; }
+.wt.ico + .wt.ico { margin-left: 2px; }
+.ob { display: inline-flex; align-items: center; padding: 0 4px; border-radius: 999px; background: var(--cream-2); color: var(--ink); }
+.ic.off, span.off { opacity: 0.3; }
+#toast span.on { color: var(--teal-dark); }
+.mc-item .ic { width: 24px; height: 24px; }
+.mc-title { padding: 4px 12px; }
+.mc-title .ic { margin: 0; width: 20px; height: 20px; }
+.mc-tip b { display: block; margin-bottom: 4px; }
+.mc-tip .tip-row { display: flex; gap: 6px; align-items: center; color: var(--ink); }
+.mc-tip .wt { font-size: 14px; }
+/* 도착 화면: 큰 기호 + 숫자 요약 */
+#clear-icons.big { display: flex; gap: 10px; justify-content: center; color: #ff9f6e; font-size: 46px; }
+#clear-icons.big .ic { width: 1em; height: 1em; }
+#clear-stats { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; align-items: center; font-size: 17px; }
+#clear-stats:empty { display: none; }
+#clear-stats .cs-time { color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+#clear-stats .cs-row { display: flex; gap: 12px; align-items: center; background: var(--cream-2); padding: 6px 14px; border-radius: 999px; }
+#clear-stats .cs-row span { display: inline-flex; align-items: center; gap: 3px; }
+#clear-stats .cs-row .ic { color: var(--muted); }
+/* 첫 화면 */
+.lobby-actions button { display: inline-flex; align-items: center; gap: 4px; font-size: 22px; padding: 10px 22px; }
+.lobby-actions button .ic { width: 1.2em; height: 1.2em; }
+button.big-play { font-size: 34px; padding: 14px 40px; }
+.join-form label { display: inline-flex; color: var(--muted); font-size: 22px; }
+.join-form button { display: inline-flex; align-items: center; }
+.room-code { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.icons-line { display: inline-flex; gap: 4px; align-items: center; justify-content: center; }
+.howto summary { list-style: none; display: inline-flex; color: var(--muted); font-size: 22px; }
+.howto summary::-webkit-details-marker { display: none; }
+.howto-keys { display: flex; flex-wrap: wrap; gap: 8px 14px; justify-content: center; margin: 10px 0; font-size: 15px; }
+.howto-keys span { display: inline-flex; align-items: center; gap: 3px; color: var(--ink); }
+.howto-keys .ic { color: var(--muted); }
+.howto table.modes { margin: 8px auto 0; font-size: 16px; }
+.howto table.modes th, .howto table.modes td { padding: 4px 10px; text-align: center; color: var(--ink); }
+.howto table.modes .ic { color: var(--ink); }

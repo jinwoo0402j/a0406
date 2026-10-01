@@ -10,7 +10,7 @@ import { resolveTargets, modeUnsupported, REASON, liftShare } from '../shared/ta
 import { segmentBlocked } from '../shared/geom.js';
 import { HostSession } from './host.js';
 import { Sfx } from './sfx.js';
-import { Inventory, HOTBAR, MAIN, WORD_DESC } from './inventory.js';
+import { Inventory, HOTBAR, MAIN } from './inventory.js';
 import { hostRoom, joinRoom, CODE_RE } from './p2p.js';
 import { icon, key, chip, esc, EFFECT_ICON, MODE_ICON } from './icons.js';
 import { SelfPredictor } from './predict.js';
@@ -84,7 +84,7 @@ function setLobby(status, note = null) {
   $('editor').hidden = true;
   S.editorOpen = false;
   if (document.pointerLockElement) document.exitPointerLock();
-  $('lobby-status').textContent = status;
+  $('lobby-status').innerHTML = status; // 이 파일에서 만든 HTML만 들어온다(밖에서 온 글은 esc)
   $('lobby-note').hidden = !note;
   if (note) $('lobby-note').textContent = note;
 }
@@ -100,7 +100,7 @@ function connect() {
   if (S.conn) return;
   S.phase = 'connecting';
   setJoinDisabled(true);
-  setLobby('호스트에 접속하는 중…');
+  setLobby(`${icon('clock')} …`);
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
   S.conn = {
     send: (msg) => { if (ws.readyState === 1) ws.send(JSON.stringify(msg)); },
@@ -133,7 +133,7 @@ function startSolo() {
 function createRoom() {
   if (S.conn) return;
   setJoinDisabled(true);
-  setLobby('방을 여는 중…');
+  setLobby(`${icon('clock')} …`);
   const session = new HostSession(onMessage);
   S.conn = session;
   try {
@@ -146,7 +146,7 @@ function createRoom() {
         // 방을 연 뒤에는 다른 선택지를 숨겨 헷갈리지 않게 한다.
         document.querySelector('.lobby-actions').hidden = true;
         $('join-form').hidden = true;
-        if (S.phase !== 'playing') setLobby('방을 만들었어요. 친구가 들어오면 바로 시작해요.');
+        if (S.phase !== 'playing') setLobby(`${icon('ok')} ${icon('link')}${icon('arrow')}${icon('people')}`);
       },
       onError: (msg) => {
         leaveRoom();
@@ -168,7 +168,7 @@ function joinByCode(raw) {
   if (S.conn) return;
   setJoinDisabled(true);
   S.phase = 'connecting';
-  setLobby(`방 ${code}에 들어가는 중…`);
+  setLobby(`${icon('in')} ${esc(code)} …`);
   try {
     S.conn = joinRoom(code, onMessage, {
       onFail: (msg) => {
@@ -213,39 +213,61 @@ function send(msg) {
 
 // 화면의 글자는 기호로: 사람은 색 동그라미, 조작은 키 모양 + 그림
 const pc = (id, cls = '') => chip(id, SEAT_COLOR[id], cls);
-const OBJ_ICON = { cargo: 'gift' };
+const OBJ_ICON = { cargo: ['flag'], rock: ['rock'], box1: ['box'], box2: ['box', 'weight'], dummy: ['dummy'] };
 // 사람·물건 표시(사람은 자리 색 동그라미, 짐은 선물 상자, 나머지는 짧은 이름)
 function P(id) {
   if (SEAT_COLOR[id]) return pc(id);
-  if (OBJ_ICON[id]) return icon(OBJ_ICON[id]);
+  if (OBJ_ICON[id]) return `<span class="ob" title="${esc(NAMES[id] || id)}">${OBJ_ICON[id].map((n) => icon(n)).join('')}</span>`;
   return `<span class="nm">${esc(NAMES[id] || id)}</span>`;
 }
-// 단어 표(그림 + 이름). 단어는 게임의 내용이라 글자로 둔다.
-function W(word, n = 1) {
+// 단어 표: 보통은 색 동그라미 + 그림만. 이름(글자)은 왼쪽 위 주문 칸·가방 결과 칸에서만(full)
+function W(word, n = 1, full = false) {
   const w = WORDS[word];
   if (!w) return '';
-  return `<span class="wt ${w.kind === KIND.EFFECT ? 'effect' : 'mod'}">${icon(EFFECT_ICON[word])}${w.label}${n > 1 ? `×${n}` : ''}</span>`;
+  const kind = w.kind === KIND.EFFECT ? 'effect' : 'mod';
+  return `<span class="wt ${kind}${full ? '' : ' ico'}" data-w="${word}" title="${w.label}">${icon(EFFECT_ICON[word])}${full ? w.label : ''}${n > 1 ? `×${n}` : ''}</span>`;
 }
 // 주문 = 수식 단어들 + 효과 단어
-function spellHTML(effect, mods = {}) {
-  return [...MOD_IDS.filter((id) => mods[id] > 0).map((id) => W(id, mods[id])), W(effect)].join('');
+function spellHTML(effect, mods = {}, full = false) {
+  return [...MOD_IDS.filter((id) => mods[id] > 0).map((id) => W(id, mods[id], full)), W(effect, 1, full)].join('');
 }
 
 function updateWho() {
   const other = S.me === 'A' ? 'B' : 'A';
   $('who-chip').innerHTML = S.solo ? `${pc(S.me)}${key('C')}${icon('swap')}${pc(other, 'dim')}` : pc(S.me);
-  const k = (k1, ic) => `<span>${k1}${icon(ic)}</span>`;
-  $('keys').innerHTML = [
-    k(key('WASD'), 'walk'), k(key('Space'), 'jump'), k(icon('mouseL'), 'wand'), k(END_CAST_IC, 'stop'),
-    k(key('F'), 'aim'), k(key('1~9'), 'hand'), k(key('Q'), 'throw'), k(key('E'), 'bag'), k(key('R'), 'release'),
-    k(key('V'), 'eye'), k(key('M'), 'sound'), S.solo ? k(key('C'), 'swap') : '',
+  $('keys').innerHTML = keysHTML(S.solo);
+}
+
+// 조작 = 키 모양 + 그림(게임 화면 오른쪽 아래와 첫 화면 조작법에 같이 쓴다)
+function keysHTML(solo, extra = false) {
+  const k = (k1, ic, title) => `<span title="${title}">${k1}${[].concat(ic).map((n) => icon(n)).join('')}</span>`;
+  return [
+    k(key('WASD'), 'walk', '이동'), k(key('Space'), 'jump', '점프'), k(icon('mouseL'), 'wand', '시전'), k(END_CAST_IC, 'stop', '시전 종료'),
+    k(key('F'), ['aim', 'self', 'near'], '대상 모드'), k(key('1~9'), 'hand', '단어 고르기'), k(key('Q'), 'throw', '던지기'),
+    k(key('E'), 'bag', '가방'), k(key('R'), 'release', '풀기'), k(key('V'), 'eye', '1인칭·3인칭'), k(key('M'), 'sound', '소리'),
+    extra ? k(key('H'), 'leaf', '안내') : '', extra ? k(icon('walk'), ['arrow', 'leaf'], '걸어가 줍기') : '',
+    solo ? k(key('C'), 'swap', 'A·B 전환') : '',
   ].join('');
+}
+
+// 첫 화면 조작법: 효과 × 대상 모드 그림표
+const MODE_PICTO = {
+  PUSH: { AIM: ['push'], SELF: ['self', 'arrow'], NEAR: ['near', 'push'] },
+  PULL: { AIM: ['pull'], NEAR: ['near', 'pull'] },
+  LIFT: { AIM: ['lift'], NEAR: ['near', 'lift'] },
+  FIREBALL: { AIM: ['fire', 'arrow', 'aim'], SELF: ['fire', 'up'], NEAR: ['fire', 'near'] },
+};
+function howtoHTML() {
+  $('howto-keys').innerHTML = keysHTML(MODE === 'solo', true);
+  const head = `<tr><th></th>${MODE_ORDER.map((m) => `<th title="${MODE_LABEL[m]}">${icon(MODE_ICON[m])}</th>`).join('')}</tr>`;
+  const rows = Object.entries(MODE_PICTO).map(([w, cells]) => `<tr><td>${W(w)}</td>${MODE_ORDER.map((m) => `<td>${cells[m] ? cells[m].map((n) => icon(n)).join('') : icon('no', 'off')}</td>`).join('')}</tr>`);
+  $('howto-modes').innerHTML = head + rows.join('');
 }
 
 // 시점: 1인칭(손만 보임) ↔ 3인칭
 function toggleView() {
   S.view = S.view === 'first' ? 'third' : 'first';
-  toast(`${icon('eye')} ${S.view === 'first' ? '1' : '3'}인칭`, 'info');
+  toast(`${icon('eye')}${S.view === 'first' ? '1' : '3'}`, 'info');
 }
 
 function switchCharacter() {
@@ -292,10 +314,10 @@ function onMessage(m) {
       S.phase = 'waiting';
       if (m.solo) break;
       if (m.p2p) {
-        if (m.you !== 'A') setLobby(`플레이어 ${m.you}(으)로 방에 들어왔어요. 곧 시작해요…`);
+        if (m.you !== 'A') setLobby(`${pc(m.you)} ${icon('in')} …`);
         break;
       }
-      setLobby(`플레이어 ${m.you}(으)로 참가했어요. 상대를 기다리는 중…`);
+      setLobby(`${pc(m.you)} ${icon('clock')} …`);
       const port = m.port;
       const lines = [];
       for (const a of m.addresses || []) lines.push(`같은 네트워크의 친구: <code>http://${a}:${port}</code>`);
@@ -319,7 +341,7 @@ function onMessage(m) {
       S.phase = 'waiting';
       S.snaps = [];
       S.latest = null;
-      setLobby('상대를 기다리는 중…', `플레이어 ${m.who}의 연결이 끊겨 로비로 돌아왔어요. 새 상대가 접속하면 처음부터 시작해요.`);
+      setLobby(`${icon('clock')} …`, `플레이어 ${m.who}의 연결이 끊겨 로비로 돌아왔어요. 새 상대가 접속하면 처음부터 시작해요.`);
       break;
     case 's':
       onSnapshot(m);
@@ -461,7 +483,7 @@ function confetti() {
 // 말풍선 알림. 실패도 겁주지 않게 '앗!'으로 부드럽게 시작한다(동물의 숲 말투).
 // html: 기호(SVG) + 짧은 글
 function toast(html, kind = 'bad') {
-  $('toast').innerHTML = kind === 'bad' && !/^앗/.test(html) ? `앗! ${html}` : html;
+  $('toast').innerHTML = html;
   $('toast').className = `show ${kind}`;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { $('toast').className = kind; }, 1600);
@@ -482,7 +504,7 @@ const REASON_HTML = {
   [REASON.HOLDING_YOU]: () => `${icon('lift')}${icon('swap')}${icon('no')}`,
   [REASON.HEAVY_GRAB]: () => `${icon('weight')} ${icon('arrow')} ${icon('people')} / ${W('STRONG')}`,
   [REASON.STANDING_ON]: () => `${icon('walk')}${icon('no')}`,
-  [REASON.PROTECTED]: () => `${icon('shield')} 보호 중`,
+  [REASON.PROTECTED]: () => `${icon('shield')}${icon('no')}`,
   [REASON.BAD_AIM]: () => `${icon('aim')}${icon('no')}`,
   [REASON.NOT_PLAYING]: () => `${icon('stop')}`,
   [REASON.SUSTAINING]: () => `${icon('lift')} ${icon('arrow')} ${END_CAST_IC}${icon('stop')}`,
@@ -595,6 +617,22 @@ function summaryText() {
   }
   lines.push(`같이 들기 ${T.colift}번 · 친구가 파이어볼에 맞음 ${T.friendFire}번 · 적 명중 ${T.enemyHit}번 · R로 풀기 ${T.release}번 · 떨어짐 ${T.fall}번`);
   return lines.join('\n');
+}
+
+// 도착 화면의 판 요약: 사람마다 주문·친구에게·물건에게·나에게·줍기·건네주기 횟수
+function clearStatsHTML() {
+  const T = S.stats || newStats();
+  const sec = Math.round(((T.clearedAt || performance.now()) - T.start) / 1000);
+  const n = (ic, v, title) => `<span title="${title}">${[].concat(ic).map((x) => icon(x)).join('')}${v}</span>`;
+  const rows = [`<div class="cs-time">${icon('clock')} ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}</div>`];
+  for (const pid of SEAT_IDS) {
+    const st = T.per[pid];
+    if (!st) continue;
+    const total = Object.values(st.casts).reduce((a, b) => a + b, 0);
+    rows.push(`<div class="cs-row">${pc(pid)}${n('wand', total, '주문')}${n('people', st.friend, '친구에게')}${n('box', st.object, '물건·적에게')}${n('self', st.self, '나에게')}${n('leaf', st.pickup, '줍기')}${n('throw', st.give, '건네준 단어')}</div>`);
+  }
+  rows.push(`<div class="cs-row all">${n(['lift', 'people'], T.colift, '같이 들기')}${n(['fire', 'people'], T.friendFire, '친구가 파이어볼에 맞음')}${n('dummy', T.enemyHit, '적 명중')}${n('release', T.release, 'R로 풀기')}${n('down', T.fall, '떨어짐')}</div>`);
+  return rows.join('');
 }
 
 function onEvent(e) {
@@ -774,7 +812,7 @@ function endCast() {
 function cycleMode() {
   S.mode = MODE_ORDER[(MODE_ORDER.indexOf(S.mode) + 1) % MODE_ORDER.length];
   S.did.mode = true;
-  toast(`${icon(MODE_ICON[S.mode])} ${MODE_LABEL[S.mode]}`, 'info');
+  toast(`${MODE_ORDER.map((m) => `<span class="${m === S.mode ? 'on' : 'off'}">${icon(MODE_ICON[m])}</span>`).join('')}`, 'info');
 }
 
 function requestLock() {
@@ -885,7 +923,7 @@ $('restart-btn').onclick = () => {
   const btn = $('restart-btn');
   const idle = `${icon('restart')} ${icon('people')}`;
   if (!restartArmed) {
-    btn.innerHTML = `${icon('restart')} 한 번 더!`;
+    btn.innerHTML = `${icon('restart')} ?`;
     restartArmed = setTimeout(() => {
       restartArmed = null;
       btn.innerHTML = idle;
@@ -901,9 +939,9 @@ $('restart-btn').onclick = () => {
 buildSeats();
 // 화면 곳곳의 기호 자리(<i data-ic="…">)를 그림으로 채운다
 for (const el of document.querySelectorAll('[data-ic]')) el.outerHTML = icon(el.dataset.ic);
-$('lock-hint').innerHTML = `${icon('mouseL')} 클릭!`;
+$('lock-hint').innerHTML = icon('mouseL');
 $('goal-flag').innerHTML = icon('flag');
-$('clear-icons').innerHTML = `${icon('gift')}${icon('people')}${icon('flag')}${icon('star')}`;
+$('clear-icons').innerHTML = `${icon('flag')}${icon('people')}${icon('ok')}`;
 $('join-btn').onclick = () => connect();
 $('solo-btn').onclick = () => startSolo();
 $('create-btn').onclick = () => createRoom();
@@ -913,14 +951,14 @@ $('join-form').addEventListener('submit', (e) => {
 });
 $('copy-link').onclick = () => {
   const text = $('room-link').textContent;
-  const done = () => { $('copy-link').textContent = '복사했어요'; setTimeout(() => { $('copy-link').textContent = '링크 복사'; }, 1500); };
+  const done = () => { $('copy-link').innerHTML = icon('ok'); setTimeout(() => { $('copy-link').innerHTML = icon('copy'); }, 1500); };
   const fallback = () => {
     const r = document.createRange();
     r.selectNodeContents($('room-link'));
     const sel = getSelection();
     sel.removeAllRanges();
     sel.addRange(r);
-    $('copy-link').textContent = '선택됨 — Ctrl+C로 복사';
+    $('copy-link').innerHTML = `${key('Ctrl')}+${key('C')}`;
   };
   try { navigator.clipboard.writeText(text).then(done, fallback); } catch { fallback(); }
 };
@@ -931,18 +969,19 @@ if (MODE === 'solo') {
   $('join-btn').hidden = true;
   document.querySelector('.seats').hidden = true;
   $('solo-btn').classList.remove('secondary');
-  $('solo-btn').textContent = '시작하기';
-  $('lobby-status').textContent = '서버 없이 이 페이지에서 바로 해 볼 수 있어요. 혼자서 A와 B를 번갈아 조작해요.';
-  $('solo-note').hidden = false;
+  $('solo-btn').classList.add('big-play');
+  $('lobby-status').innerHTML = `${pc('A')}${icon('swap')}${pc('B')}`;
 } else if (MODE === 'web') {
   // 정적 호스팅(예: Vercel): 방 만들기 / 코드·링크로 참가 / 혼자 해보기.
   $('join-btn').hidden = true;
   $('create-btn').hidden = false;
   $('join-form').hidden = false;
-  $('lobby-status').textContent = '방을 만들고 링크를 친구들에게 보내면 함께 플레이해요(최대 6명).';
+  $('lobby-status').innerHTML = `${icon('people')} 2~6`;
 } else {
   $('create-btn').hidden = true;
+  $('lobby-status').innerHTML = `${icon('people')} 2~6`;
 }
+howtoHTML();
 // 편집창 버튼에 포커스가 남으면 Space 등으로 다시 눌릴 수 있으므로 클릭 후 포커스를 푼다.
 $('editor').addEventListener('click', () => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
 
@@ -1064,7 +1103,7 @@ function throwFromSlot(i, all) {
 function itemHTML(word, count = 1) {
   if (!word) return '';
   const w = WORDS[word];
-  return `<div class="mc-item ${w.kind === KIND.EFFECT ? 'effect' : 'mod'}">${icon(EFFECT_ICON[word])}<span class="lb">${w.label}</span>${count > 1 ? `<span class="mc-count">${count}</span>` : ''}</div>`;
+  return `<div class="mc-item ${w.kind === KIND.EFFECT ? 'effect' : 'mod'}" title="${w.label}">${icon(EFFECT_ICON[word])}${count > 1 ? `<span class="mc-count">${count}</span>` : ''}</div>`;
 }
 
 function slotHTML(area, idx, s, extra = '') {
@@ -1107,7 +1146,7 @@ function renderBag() {
   const handWord = hand && WORDS[hand.word].kind === KIND.EFFECT ? hand.word : null;
   const counts = {};
   for (const id of I.mods) counts[tokenWord(id)] = (counts[tokenWord(id)] || 0) + 1;
-  $('mc-result').innerHTML = handWord ? spellHTML(handWord, counts) : `${icon('hand')}${icon('no')}`;
+  $('mc-result').innerHTML = handWord ? spellHTML(handWord, counts, true) : `${icon('hand')}${icon('no')}`;
   let main = '';
   for (let i = HOTBAR; i < HOTBAR + MAIN; i++) main += slotHTML('inv', i, I.slots[i], hov('inv', i));
   $('mc-main').innerHTML = main;
@@ -1130,7 +1169,11 @@ function clickHit(hit, button, shift, now) {
   if (hit.area === 'inv') r = I.clickSlot(hit.i, button, shift, now);
   else if (hit.area === 'mod') r = I.clickMod(hit.i, button, shift, now);
   else if (hit.area === 'hand') r = I.clickHand(button, shift, now);
-  if (r === 'reject') toast(hit.area === 'mod' ? `${icon('no')} ${icon('big')}${icon('strong')} 수식만` : `${icon('no')} ${icon('hand')} 효과만`, 'info');
+  if (r === 'reject') {
+    toast(hit.area === 'mod'
+      ? `<span class="rs" data-r="MOD_ONLY">${icon('no')}${icon('hand')} ${icon('arrow')} ${W('BIG')}${W('STRONG')}</span>`
+      : `<span class="rs" data-r="EFFECT_ONLY">${icon('no')}${W('BIG')} ${icon('arrow')} ${W('PUSH')}${W('PULL')}${W('LIFT')}${W('FIREBALL')}</span>`, 'info');
+  }
   return r;
 }
 let drag = null; // 단어를 든 채 누르고 끄는 중 { button, start, targets }
@@ -1188,7 +1231,7 @@ $('editor').addEventListener('mousemove', (e) => {
   if (JSON.stringify(prev) !== JSON.stringify(S.hover)) S.bagKey = '';
   const tip = $('mc-tip');
   if (hit?.word && !inv().cursor) {
-    tip.innerHTML = `<b>&lt;${WORDS[hit.word].label}&gt;</b><br>${WORD_DESC[hit.word] || ''}`;
+    tip.innerHTML = wordTip(hit.word);
     tip.style.left = `${e.clientX + 16}px`;
     tip.style.top = `${e.clientY + 12}px`;
     tip.hidden = false;
@@ -1196,6 +1239,16 @@ $('editor').addEventListener('mousemove', (e) => {
     tip.hidden = true;
   }
 });
+
+// 단어 설명(마우스를 올리면): 이름 + 쓸 수 있는 대상 모드 그림(효과) 또는 늘려 주는 것(수식)
+const MOD_TIP = { BIG: ['near', 'fire', 'up'], STRONG: ['push', 'weight', 'boom'] };
+function wordTip(word) {
+  const w = WORDS[word];
+  const what = w.kind === KIND.EFFECT
+    ? MODE_ORDER.map((m) => `<span class="${w.modes.includes(m) ? '' : 'off'}">${icon(MODE_ICON[m])}</span>`).join('')
+    : `${icon('plus')}${(MOD_TIP[word] || []).map((n) => icon(n)).join('')}`;
+  return `<b>${W(word, 1, true)}</b><div class="tip-row">${what}</div>`;
+}
 
 // 가방이 열려 있을 때의 키: 칸 위에서 1~9(핫바와 바꾸기), Q(던지기), E(닫기)
 function bagKey(e) {
@@ -1334,8 +1387,8 @@ function updateHud(frame) {
   for (const el of items.children) el.classList.toggle('in', !!g.in[el.dataset.k]);
   setWidth($('goal-fill'), `${Math.round(Math.min(1, g.t / TUNING.goalHoldTime) * 100)}%`);
   setHidden($('clear-banner'), !g.c);
-  if (g.c && !$('clear-summary').textContent) $('clear-summary').textContent = summaryText();
-  if (!g.c && $('clear-summary').textContent) $('clear-summary').textContent = '';
+  if (g.c && !$('clear-stats').dataset.done) { $('clear-stats').innerHTML = clearStatsHTML(); $('clear-stats').dataset.done = '1'; }
+  if (!g.c && $('clear-stats').dataset.done) { $('clear-stats').innerHTML = ''; $('clear-stats').dataset.done = ''; }
   setHidden($('lock-hint'), S.locked || S.editorOpen);
   setClass($('crosshair'), chCls);
 }
