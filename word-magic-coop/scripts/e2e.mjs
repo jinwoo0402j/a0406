@@ -137,7 +137,7 @@ try {
   await B.waitForFunction((n) => window.__wm.recent.slice(n).some((e) => (e.k === 'liftStart' || e.k === 'castFail') && e.by === 'B'), n0, { timeout: 3000 }).catch(() => {});
   const reply = await B.evaluate((n) => window.__wm.recent.slice(n).find((e) => (e.k === 'liftStart' || e.k === 'castFail') && e.by === 'B'), n0);
   const toast = await B.evaluate(() => document.getElementById('toast').textContent);
-  check('보호 중인 A에게 시전하면 거절되고 이유 표시', reply?.k === 'castFail' && /보호/.test(reply.reason) && /보호/.test(toast), `${JSON.stringify(reply)} / 미리보기 ${JSON.stringify(aimInfo)}`);
+  check('보호 중인 A에게 시전하면 거절되고 이유를 부드럽게 표시(앗!)', reply?.k === 'castFail' && /보호/.test(reply.reason) && /^앗! .*보호/.test(toast), `${JSON.stringify(reply)} / 미리보기 ${JSON.stringify(aimInfo)}`);
   await B.screenshot({ path: `${OUT}/05-B-sees-A-shield.png` });
   await B.evaluate(() => window.__wm.endCast());
 

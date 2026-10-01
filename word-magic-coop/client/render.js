@@ -5,7 +5,7 @@ import { WORDS } from '../shared/words.js';
 import { makeLabel } from './labels.js';
 
 const ACTION_COLOR = { PUSH: '#ff9a4d', PULL: '#3fcf8e', LIFT: '#4fd6ff', FIREBALL: '#ff5a2a' };
-const KIND_COLOR = { effect: '#ff9a4d', mod: '#9b7bff' }; // 효과 단어 / 수식 단어
+const KIND_COLOR = { effect: '#ff9f6e', mod: '#a98bff' }; // 효과 단어 / 수식 단어(HUD와 같은 색)
 const SCORCH = new THREE.Color('#3a2a22');
 const now = () => performance.now() / 1000;
 
