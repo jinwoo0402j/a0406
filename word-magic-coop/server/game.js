@@ -280,6 +280,7 @@ export class Game {
       case 'liftEnd': return this.onEndCast(pid); // 이전 이름
       case 'pickup': return this.onPickup(pid);
       case 'drop': return this.onDrop(pid, msg);
+      case 'give': return this.onGive(pid, msg);
       case 'equip': return this.onEquip(pid, msg);
       case 'mod': return this.onMod(pid, msg);
       case 'release': return this.onRelease(pid);
@@ -673,30 +674,60 @@ export class Game {
       return { ok: false };
     }
     const t = best.t;
-    t.owner = pid;
     t.pos = null;
     t.vy = 0;
-    t.acquiredAt = this.time + this.tick * 1e-9;
-    // 효과 칸이 비어 있으면 바로 장착, 수식은 바로 붙인다(편집창에서 개수를 줄일 수 있다).
-    const p = this.players[pid];
-    let equipped = false;
-    if (WORDS[t.word].kind === KIND.EFFECT) {
-      if (!this.effectWord(pid)) { p.slots.effect = t.id; equipped = true; }
-    } else {
-      p.slots.mods.push(t.id);
-      equipped = true;
-    }
+    const equipped = this.receiveToken(pid, t);
     this.emit({ k: 'pickup', by: pid, token: t.id, word: t.word, equipped });
     return { ok: true, token: t.id };
+  }
+
+  // 단어를 갖게 한다. 효과 칸이 비어 있으면 바로 장착, 수식은 바로 붙인다(편집창에서 개수를 줄일 수 있다).
+  receiveToken(pid, t) {
+    t.owner = pid;
+    t.acquiredAt = this.time + this.tick * 1e-9;
+    const p = this.players[pid];
+    if (WORDS[t.word].kind === KIND.EFFECT) {
+      if (!this.effectWord(pid)) { p.slots.effect = t.id; return true; }
+      return false;
+    }
+    p.slots.mods.push(t.id);
+    return true;
+  }
+
+  // 장착 칸에서 뺀다(넘기거나 내려놓을 때)
+  unequipToken(pid, tokenId) {
+    const p = this.players[pid];
+    if (p.slots.effect === tokenId) p.slots.effect = null;
+    p.slots.mods = p.slots.mods.filter((id) => id !== tokenId);
+  }
+
+  // 건네주기: 가까이 있는 친구에게 단어를 바로 넘긴다(내려놓고 줍는 과정 없이) [제안안].
+  // msg.to가 있으면 그 친구에게, 없으면 가장 가까운 친구에게. 받는 사람은 주울 때처럼 장착된다.
+  onGive(pid, msg) {
+    const t = this.token(msg.token);
+    if (!t || t.owner !== pid) return { ok: false };
+    const me = this.body(pid);
+    const near = this.seats
+      .filter((o) => o !== pid)
+      .map((o) => ({ o, d: dist(this.body(o).pos, me.pos) }))
+      .filter((c) => c.d <= this.T.giveRadius && !segmentBlocked(me.pos, this.body(c.o).pos, this.statics))
+      .sort((a, b) => a.d - b.d);
+    const to = msg.to ? near.find((c) => c.o === msg.to)?.o : near[0]?.o;
+    if (!to) {
+      this.emit({ k: 'giveFail', to: pid, reason: `건네줄 친구가 가까이 없어요 (${this.T.giveRadius}m 안)` });
+      return { ok: false };
+    }
+    this.unequipToken(pid, t.id);
+    const equipped = this.receiveToken(to, t);
+    this.emit({ k: 'give', by: pid, target: to, token: t.id, word: t.word, equipped });
+    return { ok: true, to };
   }
 
   onDrop(pid, msg) {
     const t = this.token(msg.token);
     if (!t || t.owner !== pid) return { ok: false };
     const b = this.body(pid);
-    const p = this.players[pid];
-    if (p.slots.effect === t.id) p.slots.effect = null; // 장착 칸은 비운다
-    p.slots.mods = p.slots.mods.filter((id) => id !== t.id);
+    this.unequipToken(pid, t.id); // 장착 칸은 비운다
     const fwd = [Math.sin(b.yaw), Math.cos(b.yaw)];
     const base = [b.pos[0], bottomOf(b) + 0.3, b.pos[2]];
     let pos = [base[0] + fwd[0] * this.T.dropForward, base[1], base[2] + fwd[1] * this.T.dropForward];

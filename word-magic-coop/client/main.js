@@ -7,7 +7,9 @@ import { LEVEL, SEAT_IDS, bodyDefs } from '../shared/level.js';
 import { TUNING, modFactor } from '../shared/tuning.js';
 import { WORDS, KIND, MOD_IDS, MODE_ORDER, MODE_LABEL, spellLabel } from '../shared/words.js';
 import { resolveTargets, modeUnsupported, REASON, liftShare } from '../shared/targeting.js';
+import { segmentBlocked } from '../shared/geom.js';
 import { HostSession } from './host.js';
+import { Sfx } from './sfx.js';
 import { hostRoom, joinRoom, CODE_RE } from './p2p.js';
 
 const $ = (id) => document.getElementById(id);
@@ -42,6 +44,9 @@ const S = {
   editorKey: '',
   mode: 'AIM', // 대상 모드(F로 전환): 조준 대상 → 본인 → 주변
   holding: false, // 내가 유지 중인 지속형 마법(<들기>)이 있음 — 시전 종료로 끝낸다
+  did: { cast: false, mode: false, pickup: false, share: false }, // '처음 해보기' 안내 진행
+  stats: null, // 판 요약(플레이테스트 관찰용)
+  guideOff: false,
   lastAim: '',
   projectiles: [],
   recent: [],
@@ -188,7 +193,7 @@ function updateWho() {
   $('who-chip').style.background = SEAT_COLOR[S.me];
   const other = S.me === 'A' ? 'B' : 'A';
   $('who-name').textContent = S.solo ? `플레이어 ${S.me} 조작 중 · Q로 ${other} 전환` : `플레이어 ${S.me} (나)`;
-  $('keys').textContent = `WASD 이동 · Space 점프 · 좌클릭 시전 · ${END_CAST_KEY} 시전 종료 · F 대상 모드 · E 줍기 · R 해제 · Tab 편집${S.solo ? ' · Q 캐릭터 전환' : ''}`;
+  $('keys').textContent = `WASD 이동 · Space 점프 · 좌클릭 시전 · ${END_CAST_KEY} 시전 종료 · F 대상 모드 · E 줍기 · R 해제 · Tab 편집 · M 소리${S.solo ? ' · Q 캐릭터 전환' : ''}`;
 }
 
 function switchCharacter() {
@@ -276,6 +281,7 @@ function onMessage(m) {
 
 function startPlaying() {
   S.phase = 'playing';
+  S.stats = newStats();
   S.snaps = [];
   S.latest = null;
   S.offset = null;
@@ -381,9 +387,118 @@ const whoSubj = (id) => (id === S.me ? '내가' : `플레이어 ${id}가`);
 const wlabel = (w) => `<${WORDS[w].label}>`;
 const nameOf = (id) => (id === S.me ? '나' : NAMES[id] || id);
 
+const sfx = new Sfx();
+
+// 효과음: 내 캐릭터에서 멀수록 작게
+function playSfx(e) {
+  const at = (id) => S.frame?.bodies.get(id)?.p;
+  const k = (p) => {
+    const me = at(S.me);
+    if (!p || !me) return 1;
+    return Math.max(0.15, Math.min(1, 1 - Math.hypot(p[0] - me[0], p[1] - me[1], p[2] - me[2]) / 30));
+  };
+  switch (e.k) {
+    case 'cast': {
+      const kk = k(at(e.by));
+      if (e.effect === 'FIREBALL') { if (e.mode !== 'SELF') sfx.play('fire', kk); break; }
+      sfx.play(e.effect === 'PULL' ? 'pull' : 'push', kk);
+      if ((e.targets || []).some((id) => id !== e.by)) sfx.play('hit', kk);
+      break;
+    }
+    case 'liftStart':
+      sfx.play('liftStart', k(at(e.by)));
+      if (e.by === S.me && e.heavy?.length) sfx.play('strain');
+      break;
+    case 'liftEnd': if (e.reason === 'released') sfx.play('liftEnd', k(at(e.target))); break;
+    case 'boom': sfx.play('boom', k(e.pos)); break;
+    case 'pickup': sfx.play('pickup', k(at(e.by))); break;
+    case 'give': sfx.play('give', k(at(e.by))); break;
+    case 'release': sfx.play('release', k(at(e.by))); break;
+    case 'castFail': case 'giveFail': case 'pickupFail': sfx.play('fail'); break;
+    case 'clear': sfx.play('clear'); break;
+    default: break;
+  }
+}
+
+// ------------------------------------------------------------------ 판 요약
+// 플레이테스트에서 기억 대신 기록으로 본다(v0.2 08: 친구·사물에 고루 쓰는지, 교환하는지, 사고가 나는지).
+function newStats() {
+  return { start: performance.now(), per: {}, colift: 0, friendFire: 0, enemyHit: 0, release: 0, fall: 0, clearedAt: null };
+}
+
+function statOf(pid) {
+  if (!S.stats) S.stats = newStats();
+  if (!S.stats.per[pid]) S.stats.per[pid] = { casts: {}, friend: 0, object: 0, self: 0, pickup: 0, give: 0 };
+  return S.stats.per[pid];
+}
+
+function countTargets(st, by, ids) {
+  for (const id of ids || []) {
+    if (id === by) st.self += 1;
+    else if (SEAT_IDS.includes(id)) st.friend += 1;
+    else st.object += 1;
+  }
+}
+
+function recordStats(e) {
+  if (!S.stats) S.stats = newStats();
+  const T = S.stats;
+  switch (e.k) {
+    case 'cast': {
+      const st = statOf(e.by);
+      const key = `${WORDS[e.effect].label}${e.mode !== 'AIM' ? `(${MODE_LABEL[e.mode]})` : ''}`;
+      st.casts[key] = (st.casts[key] || 0) + 1;
+      countTargets(st, e.by, e.targets);
+      break;
+    }
+    case 'liftStart': {
+      const st = statOf(e.by);
+      const key = `들기${e.mode && e.mode !== 'AIM' ? `(${MODE_LABEL[e.mode]})` : ''}`;
+      st.casts[key] = (st.casts[key] || 0) + 1;
+      countTargets(st, e.by, e.targets || [e.target]);
+      T.colift += (e.joined || []).length;
+      break;
+    }
+    case 'boom':
+      for (const h of e.hits) {
+        if (h.effects.includes('debuff')) T.friendFire += 1;
+        if (h.effects.includes('damage')) T.enemyHit += 1;
+        if (e.by && h.id !== e.by) countTargets(statOf(e.by), e.by, [h.id]);
+      }
+      break;
+    case 'pickup': statOf(e.by).pickup += 1; break;
+    case 'give': statOf(e.by).give += 1; break;
+    case 'release': T.release += 1; break;
+    case 'recover': if (SEAT_IDS.includes(e.id)) T.fall += 1; break;
+    case 'clear': if (!T.clearedAt) T.clearedAt = performance.now(); break;
+    case 'restart': S.stats = newStats(); break;
+    default: break;
+  }
+}
+
+function summaryText() {
+  const T = S.stats || newStats();
+  const sec = Math.round(((T.clearedAt || performance.now()) - T.start) / 1000);
+  const lines = [`${T.clearedAt ? '도착까지' : '지금까지'} ${Math.floor(sec / 60)}분 ${sec % 60}초`];
+  for (const pid of SEAT_IDS) {
+    const st = T.per[pid];
+    if (!st) continue;
+    const total = Object.values(st.casts).reduce((a, b) => a + b, 0);
+    const kinds = Object.entries(st.casts).map(([k, n]) => `${k} ${n}`).join(', ');
+    lines.push(`${pid}: 주문 ${total}번${kinds ? ` (${kinds})` : ''} · 친구에게 ${st.friend} · 물건·적에게 ${st.object} · 나에게 ${st.self} · 단어 줍기 ${st.pickup} · 건네기 ${st.give}`);
+  }
+  lines.push(`같이 들기 ${T.colift}번 · 친구가 파이어볼에 맞음 ${T.friendFire}번 · 적 명중 ${T.enemyHit}번 · R로 풀기 ${T.release}번 · 떨어짐 ${T.fall}번`);
+  return lines.join('\n');
+}
+
 function onEvent(e) {
+  try { playSfx(e); } catch { /* 소리는 표시용: 실패해도 진행 */ }
+  recordStats(e);
   S.recent.push(e);
   if (S.recent.length > 30) S.recent.shift();
+  if ((e.k === 'cast' || e.k === 'liftStart') && e.by === S.me) S.did.cast = true;
+  if (e.k === 'pickup' && e.by === S.me) S.did.pickup = true;
+  if (e.k === 'give' && (e.by === S.me || e.target === S.me)) S.did.share = true;
   switch (e.k) {
     case 'cast': {
       const pos = new Map();
@@ -443,7 +558,12 @@ function onEvent(e) {
       log(`${whoSubj(e.by)} ${wlabel(e.word)} 단어를 주웠어요${e.equipped ? ' (바로 장착)' : ''}`);
       break;
     case 'pickupFail':
+    case 'giveFail':
       toast(e.reason);
+      break;
+    case 'give':
+      log(`${whoSubj(e.by)} ${who(e.target)}에게 ${wlabel(e.word)}을(를) 건넸어요`);
+      if (e.target === S.me) toast(`${who(e.by)}에게서 ${wlabel(e.word)}을(를) 받았어요${e.equipped ? ' (바로 장착)' : ''}`, 'info');
       break;
     case 'drop':
       log(`${whoSubj(e.by)} ${wlabel(e.word)} 단어를 내려놓았어요`);
@@ -542,6 +662,7 @@ function endCast() {
 
 function cycleMode() {
   S.mode = MODE_ORDER[(MODE_ORDER.indexOf(S.mode) + 1) % MODE_ORDER.length];
+  S.did.mode = true;
   toast(`대상 모드: ${MODE_LABEL[S.mode]}`, 'info');
 }
 
@@ -568,6 +689,7 @@ function toggleEditor(open = !S.editorOpen) {
 }
 
 window.addEventListener('keydown', (e) => {
+  sfx.unlock();
   if (S.phase !== 'playing') return;
   if (e.code === 'Tab') {
     e.preventDefault();
@@ -582,11 +704,14 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') send({ t: 'release' });
   if (e.code === 'KeyQ') { endCast(); switchCharacter(); }
   if (e.code === 'KeyF') cycleMode();
+  if (e.code === 'KeyH') S.guideOff = !S.guideOff;
+  if (e.code === 'KeyM') toast(sfx.toggle() ? '소리 끔 (M)' : '소리 켬 (M)', 'info');
 });
 window.addEventListener('keyup', (e) => S.keys.delete(e.code));
 window.addEventListener('blur', () => S.keys.clear());
 
 $('view').addEventListener('mousedown', (e) => {
+  sfx.unlock();
   if (S.phase !== 'playing' || S.editorOpen) return;
   if (!S.locked) { requestLock(); return; }
   if (e.button === 0) cast();
@@ -611,10 +736,27 @@ function tokenWord(id) {
   return S.latest?.k.find((t) => t.id === id)?.w;
 }
 
+// 건네줄 수 있는 가장 가까운 친구(서버와 같은 규칙: 거리 + 지형에 가리지 않음)
+function nearestFriend() {
+  const me = S.frame?.bodies.get(S.me);
+  if (!me) return null;
+  let best = null;
+  for (const id of Object.keys(S.latest?.p || {})) {
+    if (id === S.me) continue;
+    const b = S.frame.bodies.get(id);
+    if (!b) continue;
+    const d = Math.hypot(b.p[0] - me.p[0], b.p[1] - me.p[1], b.p[2] - me.p[2]);
+    if (d > TUNING.giveRadius || segmentBlocked(me.p, b.p, LEVEL.statics)) continue;
+    if (!best || d < best.d) best = { id, d };
+  }
+  return best?.id || null;
+}
+
 function renderEditor() {
   const ps = mySnap();
   if (!ps) return;
-  const key = JSON.stringify([ps.e, ps.m, ps.inv]);
+  const friend = nearestFriend();
+  const key = JSON.stringify([ps.e, ps.m, ps.inv, friend]);
   if (key === S.editorKey) return;
   S.editorKey = key;
   // 효과 칸(1개)
@@ -675,13 +817,27 @@ function renderEditor() {
     drop.type = 'button';
     drop.textContent = '내려놓기';
     drop.onclick = () => send({ t: 'drop', token: id });
-    meta.append(drop);
+    const give = document.createElement('button');
+    give.className = 'ghost give';
+    give.type = 'button';
+    give.textContent = friend ? `${friend}에게 주기` : '주기';
+    give.disabled = !friend;
+    give.title = friend ? `${friend}에게 바로 넘겨요` : `건네줄 친구가 ${TUNING.giveRadius}m 안에 없어요`;
+    give.onclick = () => send({ t: 'give', token: id, to: friend });
+    meta.append(give, drop);
     card.append(word, meta);
     inv.append(card);
   }
 }
 
 $('unequip-effect').onclick = () => send({ t: 'equip', slot: 'effect', token: null });
+$('summary-box').addEventListener('toggle', () => { if ($('summary-box').open) $('summary-text').textContent = summaryText(); });
+$('summary-copy').onclick = async () => {
+  const text = summaryText();
+  $('summary-text').textContent = text;
+  try { await navigator.clipboard.writeText(text); $('summary-copy').textContent = '복사했어요'; } catch { $('summary-copy').textContent = '복사 안 됨 · 직접 선택해 복사하세요'; }
+  setTimeout(() => { $('summary-copy').textContent = '복사'; }, 1500);
+};
 $('close-editor').onclick = () => toggleEditor(false);
 // 확인 창(confirm)이 막힌 환경도 있어 페이지 안에서 두 번 눌러 확인한다.
 let restartArmed = null;
@@ -828,9 +984,31 @@ function buildPreview(bodies, rig) {
   };
 }
 
+// '처음 해보기' 안내: 기획서의 기본 흐름(단어 발견 → 주문 구성 → 시험·교환 → 함께 도착)으로 이끈다
+function guideText(ps) {
+  if (S.latest?.g?.c) return '';
+  const ew = ps.e && tokenWord(ps.e);
+  const step = (n, text) => `처음 해보기 ${n}/5 · ${text}`;
+  if (!ew) {
+    const hasEffect = ps.inv.some((id) => WORDS[tokenWord(id)].kind === KIND.EFFECT);
+    return step(1, hasEffect ? 'Tab을 눌러 효과 단어를 장착해요' : '바닥의 단어에 다가가 E로 주워요');
+  }
+  if (!S.did.cast) return step(1, `좌클릭으로 <${WORDS[ew].label}>을(를) 친구나 물건에 써 봐요`);
+  if (!S.did.mode) return step(2, 'F로 대상 모드를 바꿔 같은 주문을 다르게 써 봐요 (본인·주변)');
+  if (!S.did.pickup) return step(3, '둘러보며 새 단어를 찾아 E로 주워요 · 주문이 달라져요');
+  if (!S.did.share) return step(4, `Tab에서 친구에게 단어를 건네 봐요 (${TUNING.giveRadius}m 안)`);
+  return '목표: 짐(★)과 모두가 단차 위 도착 구역에 2초 함께 있기';
+}
+
 function updateHud(frame) {
   const ps = mySnap();
   if (!ps) return;
+  const guide = S.guideOff ? '' : guideText(ps);
+  if ($('guide').dataset.text !== guide) {
+    $('guide').dataset.text = guide;
+    $('guide').innerHTML = guide ? `${guide} <span class="key">H</span>` : '';
+    $('guide').hidden = !guide;
+  }
   // 대상 모드와 현재 주문(효과 + 수식 중첩)
   $('mode-chip').textContent = MODE_LABEL[S.mode];
   const ew = ps.e && tokenWord(ps.e);
@@ -917,6 +1095,8 @@ function updateHud(frame) {
   for (const el of items.children) el.classList.toggle('in', !!g.in[el.dataset.k]);
   $('goal-fill').style.width = `${Math.min(1, g.t / TUNING.goalHoldTime) * 100}%`;
   $('clear-banner').hidden = !g.c;
+  if (g.c && !$('clear-summary').textContent) $('clear-summary').textContent = summaryText();
+  if (!g.c && $('clear-summary').textContent) $('clear-summary').textContent = '';
   $('lock-hint').hidden = S.locked || S.editorOpen;
 }
 
@@ -1044,4 +1224,5 @@ window.__wm = {
   createRoom,
   joinByCode,
   get roomCode() { return $('room-code').textContent; },
+  summaryText,
 };

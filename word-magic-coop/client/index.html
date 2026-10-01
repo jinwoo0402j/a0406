@@ -46,8 +46,10 @@
           <tr><td>F</td><td>대상 모드 전환: 조준 대상 → 본인 → 주변</td></tr>
           <tr><td>E</td><td>가까운 단어 줍기</td></tr>
           <tr><td>R</td><td>친구가 나에게 건 들림·밀림에서 벗어나기 + 2초 보호</td></tr>
-          <tr><td>Tab</td><td>주문 편집(효과·수식 개수) · 내려놓기 · 재시작</td></tr>
+          <tr><td>Tab</td><td>주문 편집(효과·수식 개수) · 친구에게 주기 · 내려놓기 · 재시작</td></tr>
           <tr><td>Q</td><td>(혼자 해보기) A·B 조작 전환</td></tr>
+          <tr><td>H</td><td>'처음 해보기' 안내 숨기기·보이기</td></tr>
+          <tr><td>M</td><td>소리 끄기·켜기</td></tr>
         </table>
         <table class="modes">
           <tr><th>효과</th><th>조준 대상</th><th>본인</th><th>주변</th></tr>
@@ -77,6 +79,7 @@
       <div id="goal-items" class="goal-items"></div>
       <div class="goal-bar"><div id="goal-fill"></div></div>
     </div>
+    <div id="guide" hidden></div>
 
     <ul id="log"></ul>
 
@@ -84,13 +87,14 @@
     <div id="prompt"></div>
     <div id="toast"></div>
 
-    <div id="keys">WASD 이동 · Space 점프 · 좌클릭 시전 · 우클릭 시전 종료 · F 대상 모드 · E 줍기 · R 해제 · Tab 편집</div>
+    <div id="keys">WASD 이동 · Space 점프 · 좌클릭 시전 · 우클릭 시전 종료 · F 대상 모드 · E 줍기 · R 해제 · Tab 편집 · M 소리</div>
 
     <div id="lock-hint">화면을 클릭하면 조작을 시작해요</div>
 
     <div id="clear-banner" hidden>
       <div class="big">도착 성공!</div>
-      <div class="small">짐과 모두가 함께 도착했어요 · Tab → 처음부터 다시</div>
+      <div class="small">짐과 모두가 함께 도착했어요 · Tab → 판 요약 · 처음부터 다시</div>
+      <pre id="clear-summary"></pre>
     </div>
   </section>
 
@@ -115,7 +119,12 @@
       <p class="note">대상은 단어가 아니라 <b>F</b> 키로 바꾸는 대상 모드예요 (조준 대상 → 본인 → 주변).</p>
       <h3>내 단어</h3>
       <div id="inventory"></div>
-      <p class="note">단어는 한 사람만 가질 수 있어요. 내려놓으면 상대가 E로 주울 수 있고, 장착 중이던 슬롯은 비어요.</p>
+      <p class="note">단어는 한 사람만 가질 수 있어요. <b>주기</b>는 3m 안의 친구에게 바로 넘기고, 내려놓으면 아무나 E로 주울 수 있어요.</p>
+      <details id="summary-box" class="summary-box">
+        <summary>판 요약 (플레이테스트용)</summary>
+        <pre id="summary-text"></pre>
+        <button type="button" id="summary-copy" class="ghost">복사</button>
+      </details>
       <div class="editor-actions">
         <button type="button" id="restart-btn" class="danger">처음부터 다시 (모두)</button>
         <button type="button" id="close-editor">닫기 (Tab)</button>
