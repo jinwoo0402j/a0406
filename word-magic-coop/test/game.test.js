@@ -27,10 +27,9 @@ test('T1: 대상은 모드 전환으로 고르고, 같은 <밀치기>가 조준 
   assert.deepEqual([...r.targets].sort(), ['B', 'rock']);
   assert.ok(g.body('B').ext[0] > 3.9 && g.body('rock').ext[0] < -3.9, '바깥쪽으로 퍼진다');
   assert.equal(JSON.stringify(g.players.A.slots), slots, '장착 단어는 그대로');
-  // 정의되지 않은 모드 조합은 막는다(임시)
+  // 막아 둔 모드 조합: 본인 + 들기(혼자 높은 곳에 오르면 협동이 깨진다)
   run(g, CD);
   assert.match(cast(g, 'B', null, { mode: 'SELF' }).reason, /본인 모드로 쓸 수 없어요/);
-  assert.match(cast(g, 'B', null, { mode: 'NEAR' }).reason, /주변 모드로 쓸 수 없어요/);
   // 수식은 효과 칸에 넣을 수 없다
   grab(g, 'A', 'w2');
   assert.equal(g.handle('A', { t: 'equip', slot: 'effect', token: 'w2' }).ok, false);
@@ -73,7 +72,7 @@ test('T3: 밀치기는 즉시·한 번, 들기는 시전 종료까지 유지되�
   // 들기: 시전 후 놓을 때까지 계속 들려 있고 대기시간은 놓을 때 시작
   place(g, 'B', [0, 0, 7]); run(g, 0.5);
   assert.ok(cast(g, 'B', 'rock').ok);
-  assert.equal(g.body('rock').heldBy, 'B');
+  assert.deepEqual(g.body('rock').heldBy, ['B']);
   assert.equal(g.players.B.cooldownUntil, 0);
   const b = g.body('B');
   for (const [x, z] of [[4, 9], [-3, 9], [0, 10]]) {
@@ -82,10 +81,10 @@ test('T3: 밀치기는 즉시·한 번, 들기는 시전 종료까지 유지되�
     const rp = g.body('rock').pos;
     assert.ok(Math.abs(angleOf(b.pos, rp) - angleOf(b.pos, [x, 0, z])) < 0.15, `시선(${x},${z})을 따라온다`);
   }
-  assert.equal(g.body('rock').heldBy, 'B', '2초 넘게 지나도 유지');
+  assert.deepEqual(g.body('rock').heldBy, ['B'], '2초 넘게 지나도 유지');
   assert.equal(cast(g, 'B', 'rock').ok, false, '유지 중에는 새로 시전하지 않는다');
   g.handle('B', { t: 'endCast' });
-  assert.equal(g.body('rock').heldBy, null);
+  assert.deepEqual(g.body('rock').heldBy, []);
   assert.ok(g.players.B.cooldownUntil > g.time);
   run(g, 1.5);
   assert.ok(g.body('rock').grounded, '놓으면 떨어진다');
@@ -105,15 +104,15 @@ test('시전 종료: 자신이 유지하는 마법은 시전자만 끝내고, R(
   // 시전자 본인의 R은 해제(남이 건 마법에서 벗어나기)일 뿐, 자기 들기를 끝내지 않는다
   g.handle('B', { t: 'release' });
   run(g, 0.3);
-  assert.equal(g.body('rock').heldBy, 'B');
+  assert.deepEqual(g.body('rock').heldBy, ['B']);
   // 다른 사람이 시전 종료를 눌러도 B의 들기는 계속된다
   assert.equal(g.handle('A', { t: 'endCast' }).ok, false);
-  assert.equal(g.body('rock').heldBy, 'B');
+  assert.deepEqual(g.body('rock').heldBy, ['B']);
   // 시전자가 시전 종료 → 놓는다
   assert.ok(g.handle('B', { t: 'endCast' }).ok);
   const ev = g.drainEvents();
   assert.ok(ev.some((e) => e.k === 'liftEnd' && e.by === 'B' && e.target === 'rock' && e.reason === 'released'));
-  assert.equal(g.body('rock').heldBy, null);
+  assert.deepEqual(g.body('rock').heldBy, []);
   run(g, 1.5);
   assert.ok(g.body('rock').grounded, '놓으면 떨어진다');
 });
@@ -135,13 +134,22 @@ test('T4: 들기 — 무게별 높이, 힘 부족, 시점 회전을 늦게 따�
   const rockH = liftHeight('rock', 9);
   const cargoH = liftHeight('cargo', 26.5);
   assert.ok(rockH > cargoH + 1, `돌 ${rockH.toFixed(2)}m > 짐 ${cargoH.toFixed(2)}m`);
-  // 힘 부족: 무거운 상자는 못 들고, 입력 오류와 다른 이유를 알려 준다. <세게> 하나면 들 수 있다.
+  // 힘 부족: 무거운 상자는 혼자 붙잡을 수는 있지만 바닥에서 뜨지 않는다. <세게> 하나면 들 수 있다.
   place(g, 'B', [2.4, 0, 16]); run(g, 0.3);
-  assert.equal(cast(g, 'B', 'box2').reason, REASON.TOO_HEAVY);
-  assert.ok(g.events.some((e) => e.k === 'castFail' && e.reason === REASON.TOO_HEAVY));
+  const heavy = cast(g, 'B', 'box2');
+  assert.ok(heavy.ok);
+  assert.deepEqual(heavy.heavy, ['box2'], '붙잡기만 된다는 표시');
+  lookAt(g, 'B', [2.4, 3, 18.4]); run(g, 1.5);
+  assert.ok(bottom(g.body('box2')) < 0.05, '혼자서는 안 올라간다');
+  assert.equal(g.snapshot().b.find((x) => x.id === 'box2').hv, 1);
+  g.handle('B', { t: 'endCast' });
+  run(g, CD);
   grab(g, 'B', 'w5');
   place(g, 'B', [2.4, 0, 16]); run(g, 0.3);
-  assert.ok(cast(g, 'B', 'box2').ok, '<세게> 1개로 들 수 있다');
+  const strong = cast(g, 'B', 'box2');
+  assert.ok(strong.ok && !strong.heavy.length, '<세게> 1개로 들 수 있다');
+  lookAt(g, 'B', [2.4, 3, 18.4]); run(g, 1.5);
+  assert.ok(bottom(g.body('box2')) > 0.4, `<세게>로 들려 올라간다 ${bottom(g.body('box2')).toFixed(2)}`);
   g.handle('B', { t: 'endCast' });
   run(g, CD);
 
@@ -187,13 +195,13 @@ test('T5: <큰>은 0/1/3개에 따라 결과가 다르고, 가진 것보다 많�
   assert.ok(r0 < r1 && r1 < r3, `반지름 ${r0} < ${r1} < ${r3}`);
   assert.equal(g.handle('A', { t: 'mod', word: 'BIG', count: 9 }).count, 3, '가진 개수까지만');
   // 하나를 B에게 넘기면(내려놓기 → 줍기) A는 2개, B는 1개
-  place(g, 'A', [0, 0, 8]); place(g, 'B', [0, 0, 9.2]); run(g, 0.3);
+  place(g, 'A', [-5, 0, 8]); place(g, 'B', [-5, 0, 9.2]); run(g, 0.3); // 출발 구역 가운데의 <당기기> 단어를 피해서
   g.handle('A', { t: 'drop', token: 'w4' });
   run(g, 0.3);
   assert.ok(g.handle('B', { t: 'pickup' }).ok);
   assert.equal(g.modCounts('A').BIG, 2);
   assert.equal(g.modCounts('B').BIG, 1);
-  assertTokenInvariant(assert, g, 8);
+  assertTokenInvariant(assert, g, 10);
   // <세게>는 밀치기 힘을 올린다
   const g2 = newGame();
   place(g2, 'A', [0, 0, 5]); place(g2, 'B', [0, 0, 7]); run(g2, 0.3);
@@ -243,7 +251,7 @@ test('유지: R은 자신에게 걸린 들림·외부 이동을 풀고 다른 �
   lookAt(g, 'B', [0, 3, 6]); run(g, 0.6);
   assert.ok(bottom(g.body('A')) > 0.5);
   assert.ok(g.handle('A', { t: 'release' }).ok);
-  assert.equal(g.body('A').heldBy, null);
+  assert.deepEqual(g.body('A').heldBy, []);
   assert.equal(g.players.B.holding, null);
   run(g, CD);
   assert.equal(cast(g, 'B', 'A').reason, REASON.PROTECTED);
@@ -251,20 +259,23 @@ test('유지: R은 자신에게 걸린 들림·외부 이동을 풀고 다른 �
   assert.ok(cast(g, 'B', 'A').ok, '면역이 끝나면 다시 적용');
 });
 
-test('유지: 들기 단어를 넘기면 들고 있던 것을 놓치고, 넘긴 <세게>로 계속 강화할 수 없다', () => {
+test('유지: 넘긴 <세게>로는 계속 강화할 수 없고(무거운 물체가 내려앉음), <들기>를 내려놓으면 놓친다', () => {
   const g = newGame();
   grab(g, 'B', 'w5');
   place(g, 'B', [2.4, 0, 16]); place(g, 'A', [0, 0, 16]); run(g, 0.3);
   assert.ok(cast(g, 'B', 'box2').ok, '<세게>로 무거운 상자를 든다');
+  lookAt(g, 'B', [2.4, 3, 18.4]); run(g, 1.5);
+  assert.ok(bottom(g.body('box2')) > 0.4);
   g.handle('B', { t: 'drop', token: 'w5' });
-  run(g, 0.1);
-  assert.equal(g.body('box2').heldBy, null, '힘이 모자라져 놓친다');
-  run(g, CD);
-  assert.equal(cast(g, 'B', 'box2').reason, REASON.TOO_HEAVY, '넘긴 <세게>로는 더 이상 강화되지 않는다');
+  run(g, 1.5);
+  assert.deepEqual(g.body('box2').heldBy, ['B'], '붙잡은 채로');
+  assert.ok(bottom(g.body('box2')) < 0.05, '힘이 모자라 내려앉는다(넘긴 <세게>로는 더 이상 강화되지 않는다)');
   g.handle('B', { t: 'drop', token: 't2' });
   run(g, 0.1);
+  assert.deepEqual(g.body('box2').heldBy, [], '<들기>를 내려놓으면 놓친다');
+  assert.ok(g.events.some((e) => e.k === 'liftEnd' && e.reason === 'word'));
   assert.equal(g.effectWord('B'), null);
-  assertTokenInvariant(assert, g, 8);
+  assertTokenInvariant(assert, g, 10);
 });
 
 test('유지: 낙하 복구·단어 복구·동시 줍기·재시작에서 소유권과 토큰 수 보존', () => {
@@ -273,7 +284,7 @@ test('유지: 낙하 복구·단어 복구·동시 줍기·재시작에서 소�
   const ra = g.handle('A', { t: 'pickup' });
   const rb = g.handle('B', { t: 'pickup' });
   assert.equal([ra.ok, rb.ok].filter(Boolean).length, 1, '같은 틱에 한 사람만 주울 수 있다');
-  assertTokenInvariant(assert, g, 8);
+  assertTokenInvariant(assert, g, 10);
   // 사람·짐이 떨어지면 같은 지면의 안전 지점으로
   place(g, 'B', [7.2, 0, 26]); place(g, 'A', [5.5, 0, 26]); run(g, 0.3);
   if (g.effectWord('A') !== 'PUSH') g.handle('A', { t: 'equip', slot: 'effect', token: 't1' });
@@ -296,7 +307,7 @@ test('유지: 낙하 복구·단어 복구·동시 줍기·재시작에서 소�
   assert.equal(g.projectiles.length, 0);
   assert.equal(g.body('dummy').hp, TUNING.dummyHp);
   assert.deepEqual(g.body('A').pos, [-1.5, 0.65, 1]);
-  assertTokenInvariant(assert, g, 8);
+  assertTokenInvariant(assert, g, 10);
 });
 
 test('클리어: 짐 + 접속한 모든 사람이 도착 구역에 2초 이상', () => {
@@ -363,5 +374,5 @@ test('실제 조작만으로 클리어: B가 A를 들어 올리고, <들기>를 
   run(g, 2.2);
   assert.ok(g.goal.inside.cargo && g.goal.inside.A && g.goal.inside.B, JSON.stringify(g.goal.inside) + ` cargo=${cargo.pos}`);
   assert.equal(g.goal.cleared, true);
-  assertTokenInvariant(assert, g, 8);
+  assertTokenInvariant(assert, g, 10);
 });

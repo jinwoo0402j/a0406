@@ -4,7 +4,7 @@ import { LEVEL, bodyDefs } from '../shared/level.js';
 import { WORDS } from '../shared/words.js';
 import { makeLabel } from './labels.js';
 
-const ACTION_COLOR = { PUSH: '#ff9a4d', LIFT: '#4fd6ff', FIREBALL: '#ff5a2a' };
+const ACTION_COLOR = { PUSH: '#ff9a4d', PULL: '#3fcf8e', LIFT: '#4fd6ff', FIREBALL: '#ff5a2a' };
 const KIND_COLOR = { effect: '#ff9a4d', mod: '#9b7bff' }; // 효과 단어 / 수식 단어
 const SCORCH = new THREE.Color('#3a2a22');
 const now = () => performance.now() / 1000;
@@ -342,14 +342,32 @@ export class Renderer {
     }
   }
 
-  // 시전 효과: 밀치기는 빛줄기·튀는 입자, 주변 모드는 퍼지는 고리, 파이어볼은 손끝 불꽃
+  beam(a, b, color, life = 0.3) {
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.05, 0.05, a.distanceTo(b), 6),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthWrite: false }),
+    );
+    beam.position.copy(a).add(b).multiplyScalar(0.5);
+    beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+    this.scene.add(beam);
+    this.fx.push({ obj: beam, life, age: 0, kind: 'fade' });
+  }
+
+  // 시전 효과: 밀치기·당기기는 빛줄기·튀는 입자, 주변 모드는 퍼지는 고리, 파이어볼은 손끝 불꽃
   castFx(ev, positions) {
     const color = new THREE.Color(ACTION_COLOR[ev.effect] || '#ffffff');
     this.poke(ev.by, 'cast');
     const from = positions.get(ev.by);
     if (!from) return;
     if (ev.effect === 'FIREBALL') {
-      this.burst([from[0], from[1] + 0.3, from[2]], color, 8, 1.2, 0.8, 0.3, 0.06);
+      const n = ev.mode === 'NEAR' ? 16 : 8;
+      this.burst([from[0], from[1] + 0.3, from[2]], color, n, ev.mode === 'NEAR' ? 2.4 : 1.2, 0.8, 0.3, 0.06);
+      return;
+    }
+    if (ev.effect === 'PULL' && ev.anchor) {
+      // 지형을 당김: 내 손 → 붙잡은 지점으로 줄
+      this.beam(new THREE.Vector3(from[0], from[1] + 0.3, from[2]), new THREE.Vector3(...ev.anchor), color, 0.45);
+      this.burst(ev.anchor, color, 10, 1.6, 0.4);
       return;
     }
     if (ev.mode === 'NEAR') {
@@ -366,16 +384,7 @@ export class Renderer {
       const to = positions.get(id);
       if (!to) continue;
       if (id !== ev.by) {
-        const a = new THREE.Vector3(from[0], from[1] + 0.3, from[2]);
-        const b = new THREE.Vector3(...to);
-        const beam = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.05, 0.05, a.distanceTo(b), 6),
-          new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthWrite: false }),
-        );
-        beam.position.copy(a).add(b).multiplyScalar(0.5);
-        beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-        this.scene.add(beam);
-        this.fx.push({ obj: beam, life: 0.3, age: 0, kind: 'fade' });
+        this.beam(new THREE.Vector3(from[0], from[1] + 0.3, from[2]), new THREE.Vector3(...to), color);
         this.poke(id, 'hit');
       }
       this.burst(to, color, 10, 2.2, 0.6);
@@ -462,6 +471,8 @@ export class Renderer {
         else { const w = Math.sin((Math.PI * e) / dur) * (1 - e / dur); sy = 1 - 0.45 * w; sxz = 1 + 0.3 * w; }
       }
       if (s.h) { sy *= 1 + 0.08 * Math.sin(t * 14); sxz *= 1 - 0.04 * Math.sin(t * 14); }
+      // 붙잡혔지만 힘이 모자라 뜨지 못함: 바닥에서 버둥거린다
+      v.visual.position.x = s.hv ? Math.sin(t * 40) * 0.04 : 0;
       v.visual.scale.set(v.baseScale.x * sxz, v.baseScale.y * sy, v.baseScale.z * sxz);
       // 그을림(아군 디버프): 색이 어두워지고 연기가 난다
       const scorched = s.d > 0;
@@ -553,26 +564,29 @@ export class Renderer {
       this.projViews.delete(id);
     }
 
-    // 들기 연결선: 드는 사람 손 → 들린 대상
+    // 들기 연결선: 드는 사람마다 손 → 들린 대상(같이 들면 여러 줄). 힘이 모자라면 붉게.
     const held = new Set();
     for (const [id, s] of frame.bodies) {
-      if (!s.h) continue;
-      const from = frame.bodies.get(s.h);
-      if (!from) continue;
-      held.add(id);
-      let tv = this.tethers.get(id);
-      if (!tv) {
-        tv = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1, 6), new THREE.MeshBasicMaterial({ color: '#4fd6ff', transparent: true, opacity: 0.65, depthWrite: false }));
-        this.scene.add(tv);
-        this.tethers.set(id, tv);
+      for (const holder of s.h || []) {
+        const from = frame.bodies.get(holder);
+        if (!from) continue;
+        const key = `${id}>${holder}`;
+        held.add(key);
+        let tv = this.tethers.get(key);
+        if (!tv) {
+          tv = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1, 6), new THREE.MeshBasicMaterial({ color: '#4fd6ff', transparent: true, opacity: 0.65, depthWrite: false }));
+          this.scene.add(tv);
+          this.tethers.set(key, tv);
+        }
+        const a = new THREE.Vector3(from.p[0], from.p[1] + 0.3, from.p[2]);
+        const b = new THREE.Vector3(...s.p);
+        tv.visible = true;
+        tv.material.color.set(s.hv ? '#ff6b6b' : '#4fd6ff');
+        tv.scale.set(1, Math.max(0.01, a.distanceTo(b)), 1);
+        tv.position.copy(a).add(b).multiplyScalar(0.5);
+        tv.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+        tv.material.opacity = 0.45 + 0.2 * Math.sin(t * 12);
       }
-      const a = new THREE.Vector3(from.p[0], from.p[1] + 0.3, from.p[2]);
-      const b = new THREE.Vector3(...s.p);
-      tv.visible = true;
-      tv.scale.set(1, Math.max(0.01, a.distanceTo(b)), 1);
-      tv.position.copy(a).add(b).multiplyScalar(0.5);
-      tv.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-      tv.material.opacity = 0.45 + 0.2 * Math.sin(t * 12);
     }
     for (const [id, tv] of this.tethers) if (!held.has(id)) tv.visible = false;
 

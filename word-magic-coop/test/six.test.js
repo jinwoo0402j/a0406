@@ -13,7 +13,7 @@ test('6명으로 시작: 자리별 캐릭터·시작 효과, 토큰 12개', () =
   assert.deepEqual(g.players.C.slots, { effect: 't3', mods: [] });
   assert.deepEqual(g.players.F.slots, { effect: 't6', mods: [] });
   assert.ok(g.bodies.every((b) => b.grounded), '겹치지 않고 모두 바닥에 선다');
-  assertTokenInvariant(assert, g, 12);
+  assertTokenInvariant(assert, g, 14);
   // C(밀치기)와 D(들기)도 같은 규칙으로 시전
   assert.ok(cast(g, 'C', 'A').ok);
   assert.ok(cast(g, 'D', 'B').ok);
@@ -24,7 +24,7 @@ test('6명으로 시작: 자리별 캐릭터·시작 효과, 토큰 12개', () =
 test('게임 중 참가: 시작 위치 근처에 나타나고 자기 시작 단어를 받는다', () => {
   const g = new Game();
   run(g, 0.3);
-  assert.equal(g.tokens.length, 8);
+  assert.equal(g.tokens.length, 10);
   assert.ok(g.addPlayer('C'));
   assert.ok(!g.addPlayer('C'), '같은 자리는 두 번 참가하지 않는다');
   run(g, 0.3);
@@ -33,7 +33,7 @@ test('게임 중 참가: 시작 위치 근처에 나타나고 자기 시작 단�
   assert.deepEqual(g.players.C.slots, { effect: 't3', mods: [] });
   assert.ok(g.events.some((e) => e.k === 'join' && e.id === 'C'));
   assert.ok(g.snapshot().p.C);
-  assertTokenInvariant(assert, g, 9);
+  assertTokenInvariant(assert, g, 11);
 });
 
 test('퇴장: 가진 단어는 그 자리에 떨어지고, 다시 들어오면 자기 시작 단어만 돌려받는다(복제 없음)', () => {
@@ -55,7 +55,7 @@ test('퇴장: 가진 단어는 그 자리에 떨어지고, 다시 들어오면 �
   }
   run(g, 1);
   assert.ok(g.body('A').grounded, '받침이 사라져도 A는 정상적으로 떨어져 선다');
-  assertTokenInvariant(assert, g, 9);
+  assertTokenInvariant(assert, g, 11);
   // 남은 사람만으로 클리어 조건 판단
   place(g, 'cargo', [0, 1.6, 34]);
   place(g, 'A', [-1.5, 1.6, 34]);
@@ -64,7 +64,7 @@ test('퇴장: 가진 단어는 그 자리에 떨어지고, 다시 들어오면 �
   assert.equal(g.goal.cleared, true);
   // 다시 들어오면 떨어져 있던 자기 시작 단어(t3)만 인벤토리로, <파이어볼>은 월드에 그대로
   g.addPlayer('C');
-  assertTokenInvariant(assert, g, 9);
+  assertTokenInvariant(assert, g, 11);
   assert.equal(g.tokens.find((t) => t.id === 't3').owner, 'C');
   assert.equal(g.tokens.find((t) => t.id === 'w1').owner, null);
 });
@@ -83,7 +83,7 @@ test('다른 사람이 가져간 시작 단어는 재참가해도 뺏지 않는�
   g.addPlayer('D');
   assert.equal(g.tokens.find((t) => t.id === 't4').owner, 'B');
   assert.deepEqual(g.players.D.slots, { effect: null, mods: [] });
-  assertTokenInvariant(assert, g, 9); // A·B·D 자리 단어 3개 + 월드 6개
+  assertTokenInvariant(assert, g, 11); // A·B·D 자리 단어 3개 + 월드 8개
 });
 
 test('클리어는 짐 + 접속한 모든 사람이 함께 있어야 한다', () => {

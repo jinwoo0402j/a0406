@@ -6,7 +6,7 @@ import { FONT_STACK } from './labels.js';
 import { LEVEL, SEAT_IDS, bodyDefs } from '../shared/level.js';
 import { TUNING, modFactor } from '../shared/tuning.js';
 import { WORDS, KIND, MOD_IDS, MODE_ORDER, MODE_LABEL, spellLabel } from '../shared/words.js';
-import { resolveTargets, modeUnsupported, REASON } from '../shared/targeting.js';
+import { resolveTargets, modeUnsupported, REASON, liftShare } from '../shared/targeting.js';
 import { HostSession } from './host.js';
 import { hostRoom, joinRoom, CODE_RE } from './p2p.js';
 
@@ -342,6 +342,7 @@ function interpolated() {
       i: y.i,
       d: y.d,
       h: y.h,
+      hv: y.hv,
       hp: y.hp,
       dn: y.dn,
       g: y.g,
@@ -389,19 +390,28 @@ function onEvent(e) {
       for (const [id, v] of S.frame?.bodies || []) pos.set(id, v.p);
       renderer.castFx(e, pos);
       const spell = spellLabel(e.effect, e.mods);
-      log(e.effect === 'FIREBALL'
-        ? `${who(e.by)}: ${spell} 발사!`
-        : `${who(e.by)}: ${spell} (${MODE_LABEL[e.mode]}) → ${e.targets.map(nameOf).join(', ')}`);
+      if (e.effect === 'FIREBALL') {
+        const what = { AIM: '발사!', SELF: '발밑 폭발!', NEAR: '사방으로 발사!' }[e.mode] || '발사!';
+        log(`${who(e.by)}: ${spell} ${what}`);
+      } else if (e.effect === 'PULL' && e.anchor) {
+        log(`${who(e.by)}: ${spell} → 지형 쪽으로 끌려감`);
+      } else {
+        log(`${who(e.by)}: ${spell} (${MODE_LABEL[e.mode]}) → ${e.targets.map(nameOf).join(', ')}`);
+      }
       break;
     }
-    case 'liftStart':
+    case 'liftStart': {
       renderer.poke(e.by, 'cast');
-      log(`${who(e.by)}: ${spellLabel('LIFT', e.mods)} → ${nameOf(e.target)}`);
+      const ids = e.targets || [e.target];
+      const joined = new Set(e.joined || []);
+      log(`${who(e.by)}: ${spellLabel('LIFT', e.mods)} → ${ids.map((id) => (joined.has(id) ? `${nameOf(id)}(같이 들기)` : nameOf(id))).join(', ')}`);
+      if (e.by === S.me && e.heavy?.length) toast(REASON.HEAVY_GRAB, 'info');
       break;
+    }
     case 'liftEnd':
       if (e.by === S.me) S.holding = false;
       if (e.reason === 'word') log(`${whoSubj(e.by)} <들기> 단어가 없어져 ${nameOf(e.target)}을(를) 놓쳤어요`);
-      if (e.reason === 'heavy') log(`${whoSubj(e.by)} 힘이 모자라 ${nameOf(e.target)}을(를) 놓쳤어요`);
+
       if (e.reason === 'far') log(`${nameOf(e.target)}이(가) 너무 멀어져 놓쳤어요`);
       if (e.reason === 'released-by-target') log(`${nameOf(e.target)}이(가) R로 풀려났어요`);
       break;
@@ -735,6 +745,20 @@ if (MODE === 'solo') {
 $('editor').addEventListener('click', () => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
 
 // ------------------------------------------------------------------ 프레임
+// pid가 직접·간접으로 들고 있는 것들(서버 holdingChain과 같은 규칙)
+function holdingChain(pid) {
+  const out = new Set();
+  const stack = [pid];
+  while (stack.length) {
+    for (const id of S.latest?.p?.[stack.pop()]?.hold || []) {
+      if (out.has(id)) continue;
+      out.add(id);
+      if (S.latest.p[id]) stack.push(id);
+    }
+  }
+  return [...out];
+}
+
 function buildPreview(bodies, rig) {
   const ps = mySnap();
   if (!ps || !rig) return null;
@@ -742,9 +766,12 @@ function buildPreview(bodies, rig) {
   const ew = ps.e && tokenWord(ps.e);
   if (!ew) return { kind: 'none', reason: REASON.NO_EFFECT, ...none };
   if (!WORDS[ew].modes.includes(S.mode)) return { kind: 'mode', reason: modeUnsupported(ew, S.mode), ...none };
-  if (ps.hold) return { kind: 'holding', ok: new Set([ps.hold]), bad: new Set() };
-  if (ew === 'FIREBALL') return { kind: 'fire', ...none };
+  if (ps.hold?.length) return { kind: 'holding', ok: new Set(ps.hold), bad: new Set() };
   const mc = ps.mc || {};
+  if (ew === 'FIREBALL') {
+    if (S.mode === 'SELF') return { kind: 'blast', radius: TUNING.fireballBlastRadius * modFactor(TUNING, mc, 'BIG', 'blastRadius'), ...none };
+    return { kind: S.mode === 'NEAR' ? 'firering' : 'fire', ...none };
+  }
   const world = {
     statics: LEVEL.statics,
     bodies: [...bodies].map(([id, v]) => {
@@ -752,26 +779,51 @@ function buildPreview(bodies, rig) {
       return {
         id, kind: d.kind, pos: v.p, half: d.size.map((x) => x / 2), mass: d.mass ?? 1,
         traits: { movable: true, liftable: true, damageable: d.kind === 'dummy' },
-        immune: v.i > 0, heldBy: v.h || null,
+        immune: v.i > 0, heldBy: v.h || [], holding: S.latest?.p?.[id] ? holdingChain(id) : [],
       };
     }),
   };
   const aim = { origin: rig.pos, dir: rig.dir };
   let res;
   let radius = 0;
-  if (ew === 'PUSH') {
-    const reach = modFactor(TUNING, mc, 'BIG', 'pushReach');
+  const heavy = new Set();
+  if (ew === 'PUSH' || ew === 'PULL') {
+    const reach = modFactor(TUNING, mc, 'BIG', ew === 'PUSH' ? 'pushReach' : 'pullReach');
     radius = TUNING.nearbyRadius * reach;
-    res = resolveTargets(S.mode, 'PUSH', world, S.me, aim, { range: TUNING.aimedMaxRange * reach, radius });
+    res = resolveTargets(S.mode, ew, world, S.me, aim, { range: TUNING.aimedMaxRange * reach, radius });
   } else {
     const capacity = TUNING.liftCapacity * modFactor(TUNING, mc, 'STRONG', 'liftCapacity');
-    res = resolveTargets('AIM', 'LIFT', world, S.me, aim, { range: TUNING.liftRange, capacity });
+    if (S.mode === 'NEAR') {
+      // 서버와 같은 규칙: 가벼운 것부터, 나눠 든 무게의 합이 힘 안에 들 때까지
+      radius = TUNING.nearbyRadius * modFactor(TUNING, mc, 'BIG', 'liftReach');
+      res = resolveTargets('NEAR', 'LIFT', world, S.me, aim, { radius, capacity, load: 0 });
+      const byId = new Map(world.bodies.map((b) => [b.id, b]));
+      let load = 0;
+      const picked = [];
+      for (const b of res.applicable.map((id) => byId.get(id)).sort((p, q) => p.mass - q.mass)) {
+        const share = liftShare(b.mass, b.heldBy.length + 1);
+        if (load + share > capacity + 1e-9) { res.rejected.push({ id: b.id, type: 'body', reason: REASON.TOO_HEAVY }); continue; }
+        load += share;
+        picked.push(b.id);
+      }
+      res.applicable = picked;
+      if (!picked.length) res.reason = res.reason || REASON.TOO_HEAVY;
+    } else {
+      // 조준 들기는 무거워도 붙잡을 수 있다(혼자서는 안 올라감)
+      res = resolveTargets('AIM', 'LIFT', world, S.me, aim, { range: TUNING.liftRange });
+      for (const id of res.applicable) {
+        const b = world.bodies.find((x) => x.id === id);
+        if (liftShare(b.mass, b.heldBy.length + 1) > capacity + 1e-9) heavy.add(id);
+      }
+    }
   }
   return {
-    kind: ew === 'PUSH' ? 'push' : 'lift',
+    kind: ew === 'LIFT' ? 'lift' : 'push',
+    effect: ew,
     res,
     radius,
-    ok: new Set(res.applicable),
+    heavy,
+    ok: new Set(res.applicable.filter((id) => bodies.has(id))),
     bad: new Set(res.rejected.filter((r) => r.type === 'body').map((r) => r.id)),
   };
 }
@@ -802,10 +854,29 @@ function updateHud(frame) {
   if (S.editorOpen) setNote('주문 편집 중 (시전·시점 회전 잠금)', '');
   else if (!pv) setNote('', '');
   else if (pv.kind === 'none' || pv.kind === 'mode') { setNote(pv.reason, 'bad'); ch.className = 'bad'; }
-  else if (pv.kind === 'holding') { setNote(`${nameOf(ps.hold)}을(를) 들고 있어요 · 시점을 돌려 옮기고, ${END_CAST_KEY}으로 놓아요`, 'ok'); ch.className = 'ok'; }
+  else if (pv.kind === 'holding') {
+    const stuck = ps.hold.filter((id) => frame.bodies.get(id)?.hv);
+    if (stuck.length) setNote(`${stuck.map(nameOf).join(', ')}: 혼자서는 무거워 안 올라가요 · 친구가 같이 들면 올라가요 · ${END_CAST_KEY}으로 놓기`, 'bad');
+    else setNote(`${ps.hold.map(nameOf).join(', ')}을(를) 들고 있어요 · 시점을 돌려 옮기고, ${END_CAST_KEY}으로 놓아요`, 'ok');
+    ch.className = 'ok';
+  }
   else if (pv.kind === 'fire') { setNote('조준한 곳으로 날아가요 · 실제로 맞은 대상에 적용돼요', ''); ch.className = 'fire'; }
+  else if (pv.kind === 'firering') { setNote('내 둘레 사방으로 4발 · 각각 실제로 맞은 대상에 적용돼요', ''); ch.className = 'fire'; }
+  else if (pv.kind === 'blast') { setNote('발밑 폭발 · 나는 피해 없이 튀어 오르고(땅에서만), 둘레는 폭발을 맞아요', ''); ch.className = 'fire'; }
+  else if (pv.effect === 'PULL' && S.mode === 'AIM' && pv.res.selection.selected[0]?.type === 'static' && !pv.res.reason) {
+    setNote('지형을 당기면 내가 그쪽으로 끌려가요', 'ok');
+    ch.className = 'ok';
+  }
   else if (pv.ok.size) {
-    setNote(`${pv.kind === 'lift' ? '들 수 있어요' : '적용 대상'}: ${[...pv.ok].map(nameOf).join(', ')}`, 'ok');
+    const ids = [...pv.ok];
+    const label = (id) => {
+      const v = frame.bodies.get(id);
+      if (pv.heavy.has(id)) return `${nameOf(id)}(혼자서는 무거움 · 같이 들기)`;
+      if (v?.h?.length) return `${nameOf(id)}(같이 들기)`;
+      return nameOf(id);
+    };
+    const head = pv.kind === 'lift' ? '들 수 있어요' : pv.effect === 'PULL' ? '끌어와요' : '적용 대상';
+    setNote(`${head}: ${ids.map(label).join(', ')}`, pv.heavy.size && ids.every((id) => pv.heavy.has(id)) ? 'bad' : 'ok');
     if (S.mode === 'AIM') ch.className = 'ok';
   } else {
     setNote(pv.res.reason, 'bad');
@@ -815,7 +886,7 @@ function updateHud(frame) {
   // 상태 표시
   const me = frame.bodies.get(S.me);
   const badges = [];
-  if (me?.h) badges.push(`<span class="badge float">${nameOf(me.h)}에게 들려 있어요 · R로 풀기</span>`);
+  if (me?.h?.length) badges.push(`<span class="badge float">${me.h.map(nameOf).join('·')}에게 들려 있어요 · R로 풀기</span>`);
   if (me?.d > 0) badges.push(`<span class="badge ext">그을림 · 느려짐 ${me.d.toFixed(1)}초</span>`);
   if (me?.i > 0) badges.push(`<span class="badge shield">보호 중 ${me.i.toFixed(1)}초</span>`);
   for (const id of SEAT_IDS) {
@@ -885,7 +956,7 @@ function frame() {
   // 입력 전송: 바뀌었거나 주기적으로. 들기 중에는 시선이 바뀌면 자주(초당 최대 30회) 보낸다.
   const wish = wishVector().map((v) => Math.round(v * 1000) / 1000).join(',');
   const aimNow = currentRig()?.dir.map((v) => Math.round(v * 1000) / 1000).join(',') || '';
-  if (wish !== S.lastWish || nowMs - S.lastInputAt > 100 || (S.holding && aimNow !== S.lastAim && nowMs - S.lastInputAt > 33)) sendInput(false);
+  if (wish !== S.lastWish || nowMs - S.lastInputAt > 100 || (sustaining() && aimNow !== S.lastAim && nowMs - S.lastInputAt > 33)) sendInput(false);
 
   const bodies = interpolated();
   const me = bodies.get(S.me);
@@ -897,7 +968,7 @@ function frame() {
     tokens: S.latest.k,
     me: S.me,
     preview,
-    nearby: preview?.kind === 'push' && S.mode === 'NEAR' ? preview.radius : 0,
+    nearby: (S.mode === 'NEAR' && preview?.radius) || (preview?.kind === 'blast' ? preview.radius : 0),
     projectiles: S.projectiles,
     pickable: nearestPickable(bodies),
     camera: { pos: rig.pos, look: rig.look },
