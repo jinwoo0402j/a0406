@@ -63,7 +63,11 @@ async function openPage(name, url) {
   // CDN 대신 로컬 파일(이 환경은 CDN에 닿지 못한다)
   await p.route('https://cdn.jsdelivr.net/npm/three@*/build/*', (r) => r.fulfill({ contentType: 'text/javascript', body: fs.readFileSync(path.join(ROOT, 'node_modules/three/build', path.basename(new URL(r.request().url()).pathname))) }));
   await p.route('https://cdn.jsdelivr.net/npm/peerjs@*/dist/peerjs.min.js', (r) => r.fulfill({ contentType: 'text/javascript', body: fs.readFileSync(peerjsFile) }));
-  await p.goto(url);
+  // 네트워크 확인용이라 저사양 그래픽(gfx=low)으로: 한 컴퓨터에서 소프트웨어 렌더링 브라우저 3개를 함께 돌려도
+  // 장면을 만드는 동안 다른 페이지가 멈춰 연결이 끊기지 않게
+  const u = new URL(url);
+  u.searchParams.set('gfx', 'low');
+  await p.goto(u.toString());
   opened.push({ name, p });
   return p;
 }
@@ -112,8 +116,10 @@ try {
   await sleep(500);
   await guest.keyboard.press('KeyE');
   await host.bringToFront();
+  // B가 A 쪽을 보고 던지면 A 몸에 닿아 A가 받을 수도 있다(마인크래프트식 받기). 둘 다 정상
+  await host.waitForFunction(() => { const k = window.__wm.latest.k.find((x) => x.id === 't2'); return k && k.o !== 'B' && (k.p || k.o === 'A'); }, null, { timeout: 5000 }).catch(() => {});
   const t2 = await host.evaluate(() => window.__wm.latest.k.find((k) => k.id === 't2'));
-  check('친구가 가방에서 던진 <들기>가 방장 화면의 월드에 있음', !t2.o && !!t2.p);
+  check('친구가 가방에서 던진 <들기>가 방장 화면에 보임(바닥에 있거나 방장이 받음)', t2.o !== 'B' && (!!t2.p || t2.o === 'A'), JSON.stringify(t2));
 
   // 6) 세 번째 사람은 진행 중인 판에 C로 참가 → 모두의 화면에 보이고, 나가도 게임은 계속
   const third = await openPage('세번째', link);
