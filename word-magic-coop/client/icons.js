@@ -56,6 +56,11 @@ export function icon(name, cls = '') {
   return `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${P[name] || ''}</svg>`;
 }
 
+// 글을 HTML에 넣을 때(호스트가 보낸 이름·이유 등)
+export function esc(text) {
+  return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
 // 키 모양
 export function key(label) {
   return `<kbd class="kc">${label}</kbd>`;
@@ -63,7 +68,7 @@ export function key(label) {
 
 // 사람 칩(자리 색 + 글자)
 export function chip(id, color, cls = '') {
-  return `<span class="pc ${cls}" style="--c:${color}">${id}</span>`;
+  return `<span class="pc ${esc(cls)}" style="--c:${esc(color)}">${esc(id)}</span>`;
 }
 
 export const EFFECT_ICON = { PUSH: 'push', PULL: 'pull', LIFT: 'lift', FIREBALL: 'fire', BIG: 'big', STRONG: 'strong' };

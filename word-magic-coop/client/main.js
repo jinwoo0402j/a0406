@@ -12,7 +12,7 @@ import { HostSession } from './host.js';
 import { Sfx } from './sfx.js';
 import { Inventory, HOTBAR, MAIN, WORD_DESC } from './inventory.js';
 import { hostRoom, joinRoom, CODE_RE } from './p2p.js';
-import { icon, key, chip, EFFECT_ICON, MODE_ICON } from './icons.js';
+import { icon, key, chip, esc, EFFECT_ICON, MODE_ICON } from './icons.js';
 import { SelfPredictor } from './predict.js';
 
 const $ = (id) => document.getElementById(id);
@@ -218,7 +218,7 @@ const OBJ_ICON = { cargo: 'gift' };
 function P(id) {
   if (SEAT_COLOR[id]) return pc(id);
   if (OBJ_ICON[id]) return icon(OBJ_ICON[id]);
-  return `<span class="nm">${NAMES[id] || id}</span>`;
+  return `<span class="nm">${esc(NAMES[id] || id)}</span>`;
 }
 // 단어 표(그림 + 이름). 단어는 게임의 내용이라 글자로 둔다.
 function W(word, n = 1) {
@@ -488,7 +488,7 @@ const REASON_HTML = {
   [REASON.SUSTAINING]: () => `${icon('lift')} ${icon('arrow')} ${END_CAST_IC}${icon('stop')}`,
 };
 const REASON_KEY = Object.fromEntries(Object.entries(REASON).map(([k, v]) => [v, k]));
-const reasonHTML = (r) => (REASON_HTML[r] ? `<span class="rs" data-r="${REASON_KEY[r]}">${REASON_HTML[r]()}</span>` : r || '');
+const reasonHTML = (r) => (REASON_HTML[r] ? `<span class="rs" data-r="${REASON_KEY[r]}">${REASON_HTML[r]()}</span>` : esc(r || ''));
 const modeHTML = (ew, mode) => `${W(ew)} ${icon(MODE_ICON[mode])}${icon('no')} ${key('F')}`;
 
 const sfx = new Sfx();
@@ -788,6 +788,7 @@ function requestLock() {
 function toggleEditor(open = !S.editorOpen) {
   if (S.phase !== 'playing') return;
   S.editorOpen = open;
+  drag = null;
   $('editor').hidden = !open;
   if (open) {
     endCast();
@@ -838,7 +839,7 @@ function moveKeyChanged(code) {
   if (wishVector().map((v) => Math.round(v * 1000) / 1000).join(',') !== S.lastWish) sendInput(false);
 }
 const MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD']);
-window.addEventListener('blur', () => S.keys.clear());
+window.addEventListener('blur', () => { S.keys.clear(); drag = null; });
 
 $('view').addEventListener('mousedown', (e) => {
   sfx.unlock();
@@ -1137,6 +1138,7 @@ let lastDown = { k: '', t: 0 }; // 두 번 클릭 판단
 
 $('editor').addEventListener('contextmenu', (e) => e.preventDefault());
 $('editor').addEventListener('mousedown', (e) => {
+  drag = null; // 놓친 mouseup으로 남은 끌기는 버린다
   if (!S.editorOpen || e.target.closest('button, summary, pre')) return;
   const I = inv();
   const now = nowSec();
@@ -1327,7 +1329,7 @@ function updateHud(frame) {
   const items = $('goal-items');
   if (items.dataset.keys !== keys.join()) {
     items.dataset.keys = keys.join();
-    items.innerHTML = keys.map((k) => (k === 'cargo' ? `<span class="gi" data-k="${k}">${icon('gift')}</span>` : `<span class="gi pl" data-k="${k}">${pc(k)}</span>`)).join('');
+    items.innerHTML = keys.map((k) => (k === 'cargo' ? `<span class="gi" data-k="cargo">${icon('gift')}</span>` : `<span class="gi pl" data-k="${esc(k)}">${P(k)}</span>`)).join('');
   }
   for (const el of items.children) el.classList.toggle('in', !!g.in[el.dataset.k]);
   setWidth($('goal-fill'), `${Math.round(Math.min(1, g.t / TUNING.goalHoldTime) * 100)}%`);
@@ -1366,7 +1368,8 @@ function handState(bodies, me) {
 
 // 내 몸을 예측 위치로 바꾸고(들려 있으면 보간 그대로), 내가 든 물체도 같은 만큼 앞당긴다.
 function predictSelf(view, interpMe, dt) {
-  const held = new Set(holdingChain(S.me));
+  // 내가 (직접·간접으로) 들어 올린 것. 무거워 못 들고 붙잡기만 한 것(hv)은 제자리에 있으니 부딪히는 물체로 둔다
+  const held = new Set(holdingChain(S.me).filter((id) => !view.get(id)?.hv));
   const colliders = [];
   for (const [id, v] of view) if (id !== S.me && !held.has(id)) colliders.push({ id, pos: v.p, half: BODY_DEF.get(id).size.map((x) => x / 2) });
   predictor.rtt = S.rtt;
@@ -1385,7 +1388,7 @@ function predictSelf(view, interpMe, dt) {
   const delta = r.p.map((x, i) => x - interpMe.p[i]);
   for (const id of held) {
     const b = view.get(id);
-    if (b?.h?.includes(S.me)) view.set(id, { ...b, p: b.p.map((x, i) => x + delta[i]) });
+    if (b) view.set(id, { ...b, p: b.p.map((x, i) => x + delta[i]) });
   }
   return me;
 }

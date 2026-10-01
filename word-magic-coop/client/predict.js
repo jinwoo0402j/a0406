@@ -41,7 +41,14 @@ export class SelfPredictor {
     const prev = this.base;
     let v = [0, 0, 0];
     const dtH = prev ? hostTime - prev.time : 0;
-    if (prev && dtH > 1e-4 && dtH < 0.25) v = me.p.map((x, i) => (x - prev.p[i]) / dtH);
+    // 낙하 복구·재시작처럼 순간이동한 경우는 속도로 보지 않는다(보간과 같은 2.5m 기준)
+    const jump = prev && Math.hypot(...me.p.map((x, i) => x - prev.p[i])) > 2.5;
+    if (prev && !jump && dtH > 1e-4 && dtH < 0.25) v = me.p.map((x, i) => (x - prev.p[i]) / dtH);
+    // 그래도 말이 안 되게 빠르면 줄인다(수평: 밀림 상한 + 걷기, 수직: 최대 낙하·들기 속도)
+    const hMax = this.T.pushMaxSpeed + this.T.walkSpeed;
+    const h = Math.hypot(v[0], v[2]);
+    if (h > hMax) { v[0] *= hMax / h; v[2] *= hMax / h; }
+    v[1] = Math.max(-this.T.terminalFall, Math.min(this.T.terminalFall, v[1]));
     this.base = { p: [...me.p], v, g: !!me.g, slow: me.d > 0, time: hostTime, at };
   }
 

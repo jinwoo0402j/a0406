@@ -103,3 +103,25 @@ test('왕복 지연 재기: rtt를 보낸 사람에게만 같은 값으로 pong�
   const ev = g.drainEvents().filter((e) => e.k === 'pong');
   assert.deepEqual(ev, [{ k: 'pong', to: 'B', c: 12.5 }]);
 });
+
+test('예측: 낙하 복구처럼 순간이동한 스냅숏은 속도로 보지 않는다(화면이 멀리 튀지 않게)', () => {
+  const g = settled();
+  const P = new SelfPredictor(LEVEL.statics);
+  const fell = { ...snapOf(g, 'A'), p: [0, -12, 8], g: 0 };
+  P.onSnapshot(fell, g.time - 1 / 30, 9.97);
+  P.onSnapshot(snapOf(g, 'A'), g.time, 10);
+  assert.deepEqual(P.base.v, [0, 0, 0]);
+  const pred = P.simulate(P.base, 10.2, [], HALF);
+  assert.ok(dist(pred.p, P.base.p) < 0.05, `복구 지점 근처 ${pred.p.map((x) => x.toFixed(2))}`);
+});
+
+test('3인칭 카메라 + 예측 거리(12m 안)의 조준 원점은 받아들이고, 그보다 멀면 거절한다', async () => {
+  const { REASON } = await import('../shared/targeting.js');
+  const g = settled();
+  const p = g.body('A').pos;
+  const near = g.handle('A', { t: 'cast', mode: 'AIM', origin: [p[0], p[1] + 1, p[2] - 10], dir: [0, 0, 1] });
+  assert.notEqual(near.reason, REASON.BAD_AIM);
+  g.players.A.cooldownUntil = 0;
+  const far = g.handle('A', { t: 'cast', mode: 'AIM', origin: [p[0], p[1], p[2] - 13], dir: [0, 0, 1] });
+  assert.equal(far.reason, REASON.BAD_AIM);
+});
