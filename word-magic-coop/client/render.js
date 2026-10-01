@@ -5,7 +5,7 @@ import { WORDS } from '../shared/words.js';
 import { makeLabel } from './labels.js';
 import {
   bendTree, toon, toonShared, grassTexture, cliffTexture, sandTexture, woodTexture, starTexture, puffTexture,
-  skyDome, cloud, water, stepWater, roundTree, palmTree, bush, flowers, villager, giftBox, mergeStatic,
+  skyDome, cloud, water, stepWater, roundTree, palmTree, bush, flowers, villager, giftBox, mergeStatic, firstHands,
 } from './look.js';
 
 const ACTION_COLOR = { PUSH: '#ff9f6e', PULL: '#45c2ad', LIFT: '#6fd3ff', FIREBALL: '#ff7a3d' };
@@ -91,6 +91,7 @@ export class Renderer {
     this.buildStatics();
     this.buildBodies();
     this.buildRing();
+    this.buildHandScene();
     this.resize();
     window.addEventListener('resize', () => this.resize());
   }
@@ -101,6 +102,137 @@ export class Renderer {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    if (this.handCam) {
+      this.handCam.aspect = w / h;
+      this.handCam.updateProjectionMatrix();
+    }
+  }
+
+  // 1인칭 손: 따로 된 작은 장면을 본 장면 위에 그린다(깊이만 지우고) → 벽에 가까이 가도 손이 파묻히지 않는다
+  buildHandScene() {
+    this.handScene = new THREE.Scene();
+    this.handCam = new THREE.PerspectiveCamera(60, 1, 0.01, 5);
+    this.handScene.add(new THREE.HemisphereLight('#fff8ea', '#a6d77f', 1.9));
+    const sun = new THREE.DirectionalLight('#fff1d6', 1.6);
+    sun.position.set(0.6, 1, 0.4);
+    this.handScene.add(sun);
+    this.hands = new Map(); // 자리별 손(혼자 해보기에서 캐릭터를 바꾸면 손도 바뀐다)
+    // 손에 든 효과 단어: 오른손 위의 작은 구슬 + 이름표
+    this.heldOrb = new THREE.Mesh(new THREE.SphereGeometry(0.022, 14, 10), new THREE.MeshBasicMaterial({ color: '#ffffff' }));
+    this.heldHalo = new THREE.Sprite(new THREE.SpriteMaterial({ map: starTexture(), color: '#ffffff', transparent: true, depthWrite: false, opacity: 0.9 }));
+    this.heldHalo.scale.setScalar(0.06);
+    this.handScene.add(this.heldOrb, this.heldHalo);
+    this.heldLabels = new Map();
+    this.handAnim = null;
+    this.handPhase = 0;
+    this.handSway = [0, 0];
+    this.liftK = 0;
+    this.lastLook = null;
+  }
+
+  // 손 동작: cast(오른손 내밀기) · lift(두 손 내밀기) · throw(오른손 휙) · grab(왼손 쥐기)
+  handPoke(type) {
+    this.handAnim = { type, t0: now() };
+  }
+
+  handsFor(seat) {
+    let h = this.hands.get(seat);
+    if (!h) {
+      const def = this.bodyViews.get(seat)?.def;
+      h = firstHands(seat, def?.color || '#ff7f73');
+      this.handScene.add(h.group);
+      this.hands.set(seat, h);
+    }
+    return h;
+  }
+
+  heldLabel(word) {
+    let l = this.heldLabels.get(word);
+    if (!l) {
+      const w = WORDS[word];
+      l = makeLabel(w.label, { bg: KIND_COLOR[w.kind], size: 44, height: 0.032, border: '#ffffff' });
+      l.material.depthTest = false;
+      l.renderOrder = 2;
+      this.handScene.add(l);
+      this.heldLabels.set(word, l);
+    }
+    return l;
+  }
+
+  // frame.hand: { word, holding, strained, speed, grounded }
+  updateHands(frame, dt, t) {
+    const show = !!(frame.first && frame.me && this.bodyViews.get(frame.me));
+    for (const [seat, h] of this.hands) h.group.visible = show && seat === frame.me;
+    for (const l of this.heldLabels.values()) l.visible = false;
+    this.heldOrb.visible = this.heldHalo.visible = false;
+    if (!show) return false;
+    const H = this.handsFor(frame.me);
+    H.group.visible = true;
+    const hd = frame.hand || {};
+    // 걷기 흔들림
+    const moving = (hd.speed || 0) > 0.5 && hd.grounded;
+    this.handPhase += dt * (moving ? Math.min(14, 4 + hd.speed * 2.2) : 0);
+    const bob = moving ? -Math.abs(Math.sin(this.handPhase)) * 0.022 : Math.sin(t * 2) * 0.006;
+    const swing = moving ? Math.sin(this.handPhase) * 0.016 : 0;
+    // 시점을 돌리면 손이 살짝 늦게 따라온다
+    const dir = new THREE.Vector3(...frame.camera.look).sub(new THREE.Vector3(...frame.camera.pos)).normalize();
+    const yaw = Math.atan2(dir.x, dir.z);
+    const pitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+    if (this.lastLook && dt > 0) {
+      let dy = yaw - this.lastLook[0];
+      while (dy > Math.PI) dy -= Math.PI * 2;
+      while (dy < -Math.PI) dy += Math.PI * 2;
+      const tx = Math.max(-0.05, Math.min(0.05, (dy / dt) * 0.012));
+      const ty = Math.max(-0.04, Math.min(0.04, ((pitch - this.lastLook[1]) / dt) * -0.01));
+      const k = Math.min(1, dt * 8);
+      this.handSway[0] += (tx - this.handSway[0]) * k;
+      this.handSway[1] += (ty - this.handSway[1]) * k;
+    }
+    this.lastLook = [yaw, pitch];
+    // 들기 유지 중: 두 손을 들어 손바닥을 앞으로
+    this.liftK += ((hd.holding ? 1 : 0) - this.liftK) * Math.min(1, dt * 10);
+    const L = this.liftK;
+    const shake = hd.strained ? Math.sin(t * 40) * 0.006 : 0;
+    let anim = null;
+    if (this.handAnim) {
+      const e = now() - this.handAnim.t0;
+      const dur = { cast: 0.3, lift: 0.3, throw: 0.35, grab: 0.3 }[this.handAnim.type] || 0.3;
+      if (e > dur) this.handAnim = null;
+      else anim = { type: this.handAnim.type, w: Math.sin((Math.PI * e) / dur) };
+    }
+    for (const [hand, sx] of [[H.left, -1], [H.right, 1]]) {
+      // 평소: 화면 아래 양쪽 구석(핫바 옆), 팔뚝은 아래·바깥으로. 들기: 두 손을 올려 손바닥을 앞으로
+      let x = sx * (0.3 - 0.05 * L) + this.handSway[0] + swing * sx;
+      let y = -0.205 + bob + 0.07 * L + this.handSway[1];
+      let z = -0.52 - 0.04 * L;
+      let rx = 0.55 + 0.85 * L;
+      let sc = 1;
+      if (anim) {
+        const { type, w } = anim;
+        if ((type === 'cast' && sx > 0) || type === 'lift') { z -= 0.15 * w; y += 0.06 * w; x -= sx * 0.05 * w; rx += 0.6 * w; }
+        if (type === 'throw' && sx > 0) { z -= 0.1 * w; y += 0.1 * w; rx -= 0.6 * w; }
+        if (type === 'grab' && sx < 0) { y += 0.04 * w; sc = 1 + 0.25 * w; }
+      }
+      hand.position.set(x + shake, y, z);
+      hand.rotation.set(rx, sx * 0.35 * (1 - L), sx * 0.1);
+      hand.scale.setScalar(sc * 0.68); // 화면을 가리지 않게 작게
+    }
+    // 오른손에 든 효과 단어
+    if (hd.word && WORDS[hd.word]) {
+      const r = H.right.position;
+      const glow = 1 + 0.12 * Math.sin(t * 6);
+      this.heldOrb.visible = this.heldHalo.visible = true;
+      this.heldOrb.material.color.set(ACTION_COLOR[hd.word] || '#ffffff');
+      this.heldHalo.material.color.set(ACTION_COLOR[hd.word] || '#ffffff');
+      this.heldOrb.position.set(r.x - 0.012, r.y + 0.066 + 0.04 * L, r.z - 0.05);
+      this.heldOrb.scale.setScalar(glow);
+      this.heldHalo.position.copy(this.heldOrb.position);
+      this.heldHalo.material.rotation = t * 1.5;
+      const lab = this.heldLabel(hd.word);
+      lab.visible = true;
+      lab.position.set(r.x - 0.01, r.y + 0.09 + 0.04 * L, r.z - 0.04);
+    }
+    return true;
   }
 
   buildStatics() {
@@ -587,7 +719,7 @@ export class Renderer {
   render(frame, dt, t) {
     for (const [id, v] of this.bodyViews) {
       const s = frame.bodies.get(id);
-      v.group.visible = !!s;
+      v.group.visible = !!s && !(frame.first && id === frame.me); // 1인칭이면 내 몸은 숨기고 손만
       if (!s) continue;
       v.group.position.set(s.p[0], s.p[1], s.p[2]);
       v.visual.rotation.y = s.y || 0;
@@ -756,5 +888,11 @@ export class Renderer {
     this.camera.position.set(...frame.camera.pos);
     this.camera.lookAt(...frame.camera.look);
     this.renderer.render(this.scene, this.camera);
+    if (this.updateHands(frame, dt, t)) {
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.renderer.render(this.handScene, this.handCam);
+      this.renderer.autoClear = true;
+    }
   }
 }

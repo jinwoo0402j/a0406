@@ -643,3 +643,44 @@ export function mergeStatic(root) {
   for (const o of inst) out.add(o);
   return out;
 }
+
+// ------------------------------------------------------------------ 1인칭 손
+// PEAK처럼 화면 아래에 두 손만 보인다. 동물 주민의 소매 + 통통한 발바닥 손(손바닥에 분홍 젤리).
+// 카메라 공간(앞 = -Z)에 두고 따로 그린다(벽에 파묻히지 않게). 지면 휨은 걸지 않는다.
+export function firstHands(seat, color) {
+  const animal = SEAT_ANIMAL[seat] || 'cat';
+  const fur = animal === 'penguin' ? new THREE.Color('#4a4f68') : lighten(color, 0.25);
+  const sleeveMat = toon(color);
+  const furMat = toon(fur);
+  const cuffMat = toon('#ffffff');
+  const beanMat = new THREE.MeshBasicMaterial({ color: '#ff9fb0' });
+  for (const m of [sleeveMat, furMat, cuffMat, beanMat]) m.userData.noBend = true;
+  const group = new THREE.Group();
+  const hands = [-1, 1].map((sx) => {
+    const wrist = new THREE.Group();
+    const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.066, 0.22, 4, 12), sleeveMat);
+    sleeve.rotation.x = Math.PI / 2; // 팔뚝은 손목에서 카메라 쪽(+Z)으로
+    sleeve.position.z = 0.16;
+    const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.024, 8, 20), cuffMat);
+    cuff.position.z = 0.03;
+    const paw = new THREE.Mesh(new THREE.SphereGeometry(0.088, 16, 12), furMat);
+    paw.scale.set(1, 0.8, 1.12);
+    paw.position.z = -0.06;
+    wrist.add(sleeve, cuff, paw);
+    // 손바닥(아래쪽) 젤리: 손을 들어 손바닥을 앞으로 보이면 보인다
+    const pad = new THREE.Mesh(new THREE.SphereGeometry(0.032, 10, 8), beanMat);
+    pad.scale.set(1.25, 0.45, 1);
+    pad.position.set(0, -0.066, -0.05);
+    wrist.add(pad);
+    for (const x of [-0.04, 0, 0.04]) {
+      const toe = new THREE.Mesh(new THREE.SphereGeometry(0.016, 8, 6), beanMat);
+      toe.scale.set(1, 0.5, 1);
+      toe.position.set(x, -0.058, -0.115 + Math.abs(x) * 0.4);
+      wrist.add(toe);
+    }
+    wrist.userData.paw = paw;
+    group.add(wrist);
+    return wrist;
+  });
+  return { group, left: hands[0], right: hands[1], mats: [sleeveMat, furMat] };
+}
