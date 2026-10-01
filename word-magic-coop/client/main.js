@@ -13,6 +13,7 @@ import { Sfx } from './sfx.js';
 import { Inventory, HOTBAR, MAIN, WORD_DESC } from './inventory.js';
 import { hostRoom, joinRoom, CODE_RE } from './p2p.js';
 import { icon, key, chip, EFFECT_ICON, MODE_ICON } from './icons.js';
+import { SelfPredictor } from './predict.js';
 
 const $ = (id) => document.getElementById(id);
 const NAMES = { ...Object.fromEntries(SEAT_IDS.map((id) => [id, id])), rock: '돌', box1: '상자', box2: '무거운 상자', dummy: '허수아비', cargo: '짐' };
@@ -46,6 +47,8 @@ const S = {
   editorKey: '',
   mode: 'AIM', // 대상 모드(F로 전환): 조준 대상 → 본인 → 주변
   view: new URLSearchParams(location.search).get('view') === 'third' ? 'third' : 'first', // 1인칭(손만 보임, 기본) ↔ 3인칭(V)
+  predict: new URLSearchParams(location.search).get('predict') !== '0', // 내 캐릭터 예측(끄려면 ?predict=0)
+  rtt: 0, // 호스트까지 왕복 지연(초)
   holding: false, // 내가 유지 중인 지속형 마법(<들기>)이 있음 — 시전 종료로 끝낸다
   did: { cast: false, mode: false, pickup: false, attach: false, share: false }, // '처음 해보기' 안내 진행
   stats: null, // 판 요약(플레이테스트 관찰용)
@@ -60,6 +63,7 @@ const S = {
 };
 
 let renderer;
+const predictor = new SelfPredictor(LEVEL.statics);
 
 // ------------------------------------------------------------------ 로비·연결
 function setLobby(status, note = null) {
@@ -238,6 +242,7 @@ function switchCharacter() {
   const next = S.me === 'A' ? 'B' : 'A';
   S.conn.switchTo(next);
   S.me = next;
+  predictor.reset();
   const v = S.views[next] || { yaw: 0, pitch: -0.08 };
   S.yaw = v.yaw;
   S.pitch = v.pitch;
@@ -308,12 +313,22 @@ function onMessage(m) {
       onSnapshot(m);
       break;
     case 'ev':
+      if (m.k === 'pong') { onPong(m); break; }
       onEvent(m);
       break;
   }
 }
 
+// 왕복 지연: 1초마다 재서 내 캐릭터 예측에 쓴다(가끔 늦게 오는 값에는 덜 흔들리게)
+function onPong(m) {
+  const sample = performance.now() / 1000 - m.c;
+  if (!(sample >= 0 && sample < 2)) return;
+  S.rtt = Math.min(0.25, S.rtt ? S.rtt + (sample - S.rtt) * (sample < S.rtt ? 0.5 : 0.15) : sample);
+}
+setInterval(() => { if (S.phase === 'playing') send({ t: 'rtt', c: performance.now() / 1000 }); }, 1000);
+
 function startPlaying() {
+  predictor.reset();
   S.phase = 'playing';
   S.stats = newStats();
   S.snaps = [];
@@ -337,6 +352,7 @@ function onSnapshot(s) {
     S.offset = sample;
     S.snaps = [];
     S.round = s.round;
+    predictor.reset();
   } else {
     S.offset = Math.min(sample, S.offset + 0.002);
   }
@@ -344,6 +360,8 @@ function onSnapshot(s) {
   while (S.snaps.length > 2 && S.snaps[1].time < s.time - 1) S.snaps.shift();
   S.latest = s;
   S.latestAt = now;
+  const mine = s.b.find((x) => x.id === S.me);
+  if (mine) predictor.onSnapshot(mine, s.time, now);
 }
 
 const lerp = (a, b, k) => a + (b - a) * k;
@@ -697,6 +715,7 @@ function sendInput(jump = false) {
   const rig = currentRig();
   if (rig) msg.aim = rig.dir.map((v) => Math.round(v * 1000) / 1000); // 시선 방향(들기 중 물체가 따라온다)
   send(msg);
+  predictor.input(performance.now() / 1000, wish, jump);
   S.lastWish = wish.join(',');
   S.lastAim = msg.aim?.join(',') || '';
   S.lastInputAt = performance.now();
@@ -1048,10 +1067,11 @@ function renderBag() {
   const ps = mySnap();
   if (!ps) return;
   const I = inv();
-  const sig = JSON.stringify([I.slots, I.mods, I.sel, I.cursor, S.hover, ps.mc, ps.e]);
+  const sig = JSON.stringify([I.slots, I.mods, I.sel, I.cursor, S.hover, ps.mc, ps.e, drag?.targets]);
   if (sig === S.bagKey) return;
   S.bagKey = sig;
-  const hov = (area, i) => (S.hover && S.hover.area === area && S.hover.i === i ? ' hover' : '');
+  const hov = (area, i) => (S.hover && S.hover.area === area && S.hover.i === i ? ' hover' : '')
+    + (drag?.targets.length > 1 && drag.targets.some((t) => t.area === area && t.i === i) ? ' drag' : '');
   const hand = I.slots[I.sel];
   $('mc-hand').outerHTML = `<div id="mc-hand" class="mc-slot hand${hov('hand', 0)}" data-area="hand" data-i="0"${hand ? ` data-word="${hand.word}"` : ''}>${hand && WORDS[hand.word].kind === KIND.EFFECT ? itemHTML(hand.word) : ''}</div>`;
   $('mc-hand-label').innerHTML = `${icon('hand')}${key(I.sel + 1)}`;
@@ -1080,6 +1100,19 @@ function slotUnder(el) {
   return { area: slot.dataset.area, i: Number(slot.dataset.i), word: slot.dataset.word || null };
 }
 
+// 칸 하나 클릭(마인크래프트 규칙). 넣을 수 없는 칸이면 안내
+function clickHit(hit, button, shift, now) {
+  const I = inv();
+  let r = false;
+  if (hit.area === 'inv') r = I.clickSlot(hit.i, button, shift, now);
+  else if (hit.area === 'mod') r = I.clickMod(hit.i, button, shift, now);
+  else if (hit.area === 'hand') r = I.clickHand(button, shift, now);
+  if (r === 'reject') toast(hit.area === 'mod' ? `${icon('no')} ${icon('big')}${icon('strong')} 수식만` : `${icon('no')} ${icon('hand')} 효과만`, 'info');
+  return r;
+}
+let drag = null; // 단어를 든 채 누르고 끄는 중 { button, start, targets }
+let lastDown = { k: '', t: 0 }; // 두 번 클릭 판단
+
 $('editor').addEventListener('contextmenu', (e) => e.preventDefault());
 $('editor').addEventListener('mousedown', (e) => {
   if (!S.editorOpen || e.target.closest('button, summary, pre')) return;
@@ -1094,12 +1127,28 @@ $('editor').addEventListener('mousedown', (e) => {
   }
   e.preventDefault();
   $('mc-tip').hidden = true;
-  let r = false;
-  if (hit.area === 'inv') r = I.clickSlot(hit.i, e.button, e.shiftKey, now);
-  else if (hit.area === 'mod') r = I.clickMod(hit.i, e.button, e.shiftKey, now);
-  else if (hit.area === 'hand') r = I.clickHand(e.button, e.shiftKey, now);
-  if (r === 'reject') toast(hit.area === 'mod' ? `${icon('no')} ${icon('big')}${icon('strong')} 수식만` : `${icon('no')} ${icon('hand')} 효과만`, 'info');
+  const k = `${hit.area}:${hit.i}`;
+  const dbl = e.button === 0 && !e.shiftKey && lastDown.k === k && now - lastDown.t < 0.3;
+  lastDown = { k, t: now };
+  // 두 번 클릭: 같은 수식을 커서로 모두 모은다
+  if (dbl && I.collect()) { S.bagKey = ''; return; }
+  // 단어를 든 채 누르면 끌기 시작: 떼는 곳에서 확정(한 칸이면 보통 클릭, 여러 칸이면 나눠 놓기)
+  if (I.cursor && !e.shiftKey && (e.button === 0 || e.button === 2) && I.canDrag(hit.area, hit.i)) {
+    drag = { button: e.button, start: hit, targets: [{ area: hit.area, i: hit.i }] };
+    S.bagKey = '';
+    return;
+  }
+  clickHit(hit, e.button, e.shiftKey, now);
   S.bagKey = '';
+});
+window.addEventListener('mouseup', (e) => {
+  if (!drag) return;
+  const d = drag;
+  drag = null;
+  S.bagKey = '';
+  if (!S.editorOpen || e.button !== d.button) return;
+  if (d.targets.length === 1) clickHit(d.start, d.button, false, nowSec());
+  else inv().dragPlace(d.targets, d.button, nowSec());
 });
 $('editor').addEventListener('mousemove', (e) => {
   $('mc-cursor').style.left = `${e.clientX}px`;
@@ -1107,6 +1156,11 @@ $('editor').addEventListener('mousemove', (e) => {
   const hit = slotUnder(e.target);
   const prev = S.hover;
   S.hover = hit ? { area: hit.area, i: hit.i } : null;
+  if (drag && hit && inv().cursor && inv().canDrag(hit.area, hit.i) && !drag.targets.some((t) => t.area === hit.area && t.i === hit.i)
+    && drag.targets.length < inv().cursor.tokens.length) {
+    drag.targets.push({ area: hit.area, i: hit.i });
+    S.bagKey = '';
+  }
   if (JSON.stringify(prev) !== JSON.stringify(S.hover)) S.bagKey = '';
   const tip = $('mc-tip');
   if (hit?.word && !inv().cursor) {
@@ -1287,6 +1341,32 @@ function handState(bodies, me) {
   };
 }
 
+// 내 몸을 예측 위치로 바꾸고(들려 있으면 보간 그대로), 내가 든 물체도 같은 만큼 앞당긴다.
+function predictSelf(view, interpMe, dt) {
+  const held = new Set(holdingChain(S.me));
+  const colliders = [];
+  for (const [id, v] of view) if (id !== S.me && !held.has(id)) colliders.push({ id, pos: v.p, half: BODY_DEF.get(id).size.map((x) => x / 2) });
+  predictor.rtt = S.rtt;
+  const r = predictor.present(performance.now() / 1000, dt, {
+    colliders,
+    half: BODY_DEF.get(S.me).size.map((x) => x / 2),
+    fallback: interpMe.p,
+    enabled: S.predict && !interpMe.h?.length,
+  });
+  const me = { ...interpMe, p: r.p };
+  if (r.predicted) {
+    me.speed = Math.hypot(r.v[0], r.v[2]);
+    me.g = r.g ? 1 : 0;
+  }
+  view.set(S.me, me);
+  const delta = r.p.map((x, i) => x - interpMe.p[i]);
+  for (const id of held) {
+    const b = view.get(id);
+    if (b?.h?.includes(S.me)) view.set(id, { ...b, p: b.p.map((x, i) => x + delta[i]) });
+  }
+  return me;
+}
+
 let lastT = performance.now();
 function frame() {
   requestAnimationFrame(frame);
@@ -1312,23 +1392,25 @@ function frame() {
   const aimNow = currentRig()?.dir.map((v) => Math.round(v * 1000) / 1000).join(',') || '';
   if (wish !== S.lastWish || nowMs - S.lastInputAt > 100 || (sustaining() && aimNow !== S.lastAim && nowMs - S.lastInputAt > 33)) sendInput(false);
 
+  // bodies: 호스트와 같은 시점(보간) — 미리보기 판정용. view: 그릴 상태(내 몸·내가 든 물체는 예측으로 앞당김)
   const bodies = interpolated();
-  const me = bodies.get(S.me);
-  if (!me) return;
+  if (!bodies.get(S.me)) return;
+  const view = new Map(bodies);
+  const me = predictSelf(view, bodies.get(S.me), dt);
   const rig = rigFor(S.view, me.p, S.yaw, S.pitch);
   const preview = S.editorOpen ? null : buildPreview(bodies, rig);
   const f = {
-    bodies,
+    bodies: view,
     tokens: S.tokensView || S.latest.k,
     me: S.me,
     preview,
     nearby: (S.mode === 'NEAR' && preview?.radius) || (preview?.kind === 'blast' ? preview.radius : 0),
     projectiles: S.projectiles,
-    pickable: nearestPickable(bodies),
+    pickable: nearestPickable(view),
     camera: { pos: rig.pos, look: rig.look },
     cleared: S.latest.g.c,
     first: S.view === 'first',
-    hand: handState(bodies, me),
+    hand: handState(view, me),
   };
   S.frame = f;
   renderer.render(f, dt, t);
@@ -1361,6 +1443,9 @@ window.__wm = {
   get latest() { return S.latest; },
   get preview() { return S.frame?.preview; },
   get view() { return { yaw: S.yaw, pitch: S.pitch, mode: S.view }; },
+  get rtt() { return S.rtt; },
+  setPredict(on) { S.predict = !!on; },
+  get selfError() { const p = S.frame?.bodies.get(S.me)?.p; const q = S.latest?.b.find((x) => x.id === S.me)?.p; return p && q ? Math.hypot(p[0] - q[0], p[2] - q[2]) : null; },
   setCamera(v) { S.view = v === 'third' ? 'third' : 'first'; },
   reasonHTML,
   REASON,
@@ -1414,5 +1499,6 @@ window.__wm = {
   selectSlot(i) { inv().select(i); },
   throwSelected() { throwFromSlot(inv().sel, false); },
   get hotbar() { const I = inv(); return I.slots.slice(0, HOTBAR).map((x, i) => (x ? { i, word: x.word, n: x.tokens.length, sel: i === I.sel } : null)); },
+  get dragging() { return drag ? drag.targets.length : 0; },
   get bag() { const I = inv(); return { slots: I.slots.map((x) => (x ? { word: x.word, n: x.tokens.length } : null)), mods: [...I.mods], sel: I.sel, cursor: I.cursor ? { word: I.cursor.word, n: I.cursor.tokens.length } : null }; },
 };

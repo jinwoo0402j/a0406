@@ -253,3 +253,5 @@ kbd.kc { display: inline-grid; place-items: center; min-width: 1.6em; height: 1.
 .goal-items span.gi .pc { background: var(--c); color: #fff; padding: 0; border-radius: 50%; }
 .goal-items span.gi.pl:not(.in) .pc { filter: grayscale(0.6) opacity(0.5); }
 .goal-items span.gi.pl.in { box-shadow: 0 0 0 3px var(--ok); }
+/* 끌어서 나눠 놓는 중인 칸 */
+.mc-slot.drag { background: #e3f6f1; box-shadow: inset 0 0 0 3px var(--teal); }

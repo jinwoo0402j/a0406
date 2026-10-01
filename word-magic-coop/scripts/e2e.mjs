@@ -217,6 +217,28 @@ try {
   // [브라우저] 가방 창: 수식 묶음(큰×3)을 Shift+클릭하면 수식 칸으로, 결과에 주문이 보인다. 수식 칸을 Shift+클릭하면 가방으로
   await A.keyboard.press('KeyE');
   await sleep(300);
+  // [브라우저] 끌어서 나눠 놓기(마크): <큰>×3을 집어 빈칸 3개 위로 끌면 1개씩, 두 번 클릭하면 다시 한 묶음
+  const centerOf = async (loc) => { const b = await loc.boundingBox(); return [b.x + b.width / 2, b.y + b.height / 2]; };
+  await A.locator('.mc-grid .mc-slot[data-word="BIG"]').first().click();
+  const empties = A.locator('#mc-main .mc-slot:not([data-word])');
+  const pts = [];
+  for (let i = 0; i < 3; i++) pts.push(await centerOf(empties.nth(i)));
+  await A.mouse.move(...pts[0]);
+  await A.mouse.down();
+  await A.mouse.move(...pts[1], { steps: 4 });
+  await A.mouse.move(...pts[2], { steps: 4 });
+  await A.screenshot({ path: `${OUT}/19-A-bag-drag.png` });
+  await A.mouse.up();
+  await sleep(200);
+  const spread = await A.evaluate(() => window.__wm.bag);
+  const ones = spread.slots.filter((x) => x?.word === 'BIG').map((x) => x.n);
+  check('[브라우저] 단어를 든 채 빈칸 3개 위로 끌면 1개씩 나눠 놓임(마크)', ones.join() === '1,1,1' && !spread.cursor, JSON.stringify(ones));
+  await A.mouse.dblclick(...pts[1]);
+  await sleep(200);
+  const col = await A.evaluate(() => window.__wm.bag);
+  check('[브라우저] 두 번 클릭하면 같은 수식이 다시 한 묶음으로 모임', col.cursor?.word === 'BIG' && col.cursor.n === 3 && !col.slots.some((x) => x?.word === 'BIG'), JSON.stringify(col.cursor));
+  await A.mouse.click(...pts[0]);
+  await sleep(200);
   await A.locator('.mc-grid .mc-slot[data-word="BIG"]').first().click({ modifiers: ['Shift'] });
   for (let i = 0; i < 20 && g.modCounts('A').BIG !== 3; i++) await sleep(100);
   await sleep(150);
