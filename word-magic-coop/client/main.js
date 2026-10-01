@@ -383,8 +383,24 @@ function log(text) {
 }
 
 let toastTimer;
+// 도착 축하 꽃가루(동숲처럼 칭찬은 크게)
+function confetti() {
+  const colors = ['#ff9f6e', '#a98bff', '#45c2ad', '#ffd95a', '#8ccf5e', '#ff7f9f'];
+  for (let i = 0; i < 70; i++) {
+    const c = document.createElement('div');
+    c.className = 'confetti';
+    c.style.left = `${Math.random() * 100}vw`;
+    c.style.background = colors[i % colors.length];
+    c.style.animationDuration = `${2.2 + Math.random() * 1.8}s`;
+    c.style.animationDelay = `${Math.random() * 0.6}s`;
+    document.body.append(c);
+    setTimeout(() => c.remove(), 5000);
+  }
+}
+
+// 말풍선 알림. 실패도 겁주지 않게 '앗!'으로 부드럽게 시작한다(동물의 숲 말투).
 function toast(text, kind = 'bad') {
-  $('toast').textContent = text;
+  $('toast').textContent = kind === 'bad' && !/^앗/.test(text) ? `앗! ${text}` : text;
   $('toast').className = `show ${kind}`;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { $('toast').className = kind; }, 1600);
@@ -569,7 +585,8 @@ function onEvent(e) {
         log(`${whoSubj(e.by)} ${who(e.from)}의 ${wlabel(e.word)}을(를) 받았어요`);
         if (e.by === S.me) toast(`${who(e.from)}에게서 ${wlabel(e.word)}을(를) 받았어요${e.equipped ? ' (바로 장착)' : ''}`, 'info');
       } else {
-        log(`${whoSubj(e.by)} ${wlabel(e.word)} 단어를 주웠어요${e.equipped ? ' (바로 장착)' : ''}`);
+        log(`${whoSubj(e.by)} ${wlabel(e.word)} 단어를 주웠어요${e.equipped ? ' (바로 손에 듦)' : ''}`);
+        if (e.by === S.me) toast(`새 단어를 찾았어요! ${wlabel(e.word)}${WORDS[e.word].kind === KIND.MOD ? ' · E 가방에서 수식 칸에 넣어 봐요' : ''}`, 'info');
       }
       break;
     case 'throw':
@@ -595,6 +612,7 @@ function onEvent(e) {
       break;
     case 'clear':
       log('도착 성공! 짐과 모두가 함께 도착했어요');
+      confetti();
       break;
     case 'join':
       if (e.id !== S.me) log(`플레이어 ${e.id}가 들어왔어요`);
