@@ -91,3 +91,9 @@ export function assertTokenInvariant(assert, g, expected) {
     for (const id of s.mods) assert.equal(g.token(id).owner, pid, '장착한 수식은 본인 소유');
   }
 }
+
+// 가방 창에서 수식 칸에 넣기(장착): 가진 수식 단어들을 붙인다. ids를 주지 않으면 가진 수식 전부
+export function attach(g, pid, ids = null) {
+  const mods = ids || g.tokens.filter((t) => t.owner === pid && WORDS[t.word].kind === KIND.MOD).map((t) => t.id);
+  return g.handle(pid, { t: 'loadout', effect: g.players[pid].slots.effect, mods });
+}

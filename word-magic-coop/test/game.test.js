@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TUNING } from '../shared/tuning.js';
 import { REASON } from '../shared/targeting.js';
-import { newGame, run, place, cast, grab, lookAt, bottom, assertTokenInvariant, walkTo } from './helpers.js';
+import { newGame, run, place, cast, grab, attach, lookAt, bottom, assertTokenInvariant, walkTo } from './helpers.js';
 
 const CD = TUNING.castCooldown + 0.02;
 const angleOf = (c, p) => Math.atan2(p[0] - c[0], p[2] - c[2]);
@@ -145,6 +145,7 @@ test('T4: 들기 — 무게별 높이, 힘 부족, 시점 회전을 늦게 따�
   g.handle('B', { t: 'endCast' });
   run(g, CD);
   grab(g, 'B', 'w5');
+  attach(g, 'B');
   place(g, 'B', [2.4, 0, 16]); run(g, 0.3);
   const strong = cast(g, 'B', 'box2');
   assert.ok(strong.ok && !strong.heavy.length, '<세게> 1개로 들 수 있다');
@@ -183,7 +184,9 @@ test('T5: <큰>은 0/1/3개에 따라 결과가 다르고, 가진 것보다 많�
   grab(g, 'A', 'w1');
   g.handle('A', { t: 'equip', slot: 'effect', token: 'w1' });
   for (const id of ['w2', 'w3', 'w4']) grab(g, 'A', id);
-  assert.equal(g.modCounts('A').BIG, 3, '주우면 바로 붙는다');
+  assert.equal(g.modCounts('A').BIG, 0, '마인크래프트처럼 주우면 가방으로(자동으로 안 붙음)');
+  assert.ok(attach(g, 'A').ok, '가방 창에서 수식 칸에 넣는다');
+  assert.equal(g.modCounts('A').BIG, 3);
   const radiusWith = (n) => {
     g.handle('A', { t: 'mod', word: 'BIG', count: n });
     place(g, 'A', [0, 0, 8]); run(g, CD);
@@ -200,6 +203,8 @@ test('T5: <큰>은 0/1/3개에 따라 결과가 다르고, 가진 것보다 많�
   run(g, 1);
   assert.equal(g.token('w4').owner, 'B');
   assert.equal(g.modCounts('A').BIG, 2);
+  assert.equal(g.modCounts('B').BIG, 0, '받은 수식도 가방으로');
+  attach(g, 'B');
   assert.equal(g.modCounts('B').BIG, 1);
   assertTokenInvariant(assert, g, 10);
   // <세게>는 밀치기 힘을 올린다
@@ -209,6 +214,7 @@ test('T5: <큰>은 0/1/3개에 따라 결과가 다르고, 가진 것보다 많�
   const base = g2.body('B').ext[1];
   run(g2, 2);
   grab(g2, 'A', 'w5');
+  attach(g2, 'A');
   place(g2, 'A', [0, 0, 5]); place(g2, 'B', [0, 0, 7]); run(g2, 0.3);
   cast(g2, 'A', 'B');
   assert.ok(g2.body('B').ext[1] > base * 1.2, `<세게> ${g2.body('B').ext[1].toFixed(2)} > ${base.toFixed(2)}`);
@@ -262,6 +268,7 @@ test('유지: R은 자신에게 걸린 들림·외부 이동을 풀고 다른 �
 test('유지: 넘긴 <세게>로는 계속 강화할 수 없고(무거운 물체가 내려앉음), <들기>를 내려놓으면 놓친다', () => {
   const g = newGame();
   grab(g, 'B', 'w5');
+  attach(g, 'B');
   place(g, 'B', [2.4, 0, 16]); place(g, 'A', [0, 0, 16]); run(g, 0.3);
   assert.ok(cast(g, 'B', 'box2').ok, '<세게>로 무거운 상자를 든다');
   lookAt(g, 'B', [2.4, 3, 18.4]); run(g, 1.5);

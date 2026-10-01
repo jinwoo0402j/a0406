@@ -45,3 +45,25 @@ test('땅의 단어는 걸어가 닿으면 줍고, 효과 칸이 비어 있으�
   assert.equal(g.token('w1').owner, 'A', '걸어가서 닿으면 줍는다');
   assert.equal(g.players.A.slots.effect, 'w1', '<파이어볼>이 바로 장착');
 });
+
+test('가방 장착(loadout): 손에 든 효과와 수식 칸을 한꺼번에 정하고, 남의 단어·종류 틀림·칸 초과는 거절', () => {
+  const g = newGame();
+  for (const id of ['w2', 'w3', 'w4']) {
+    const t = g.token(id);
+    if (t.owner === 'A') continue; // 옆 단어를 주우며 이미 닿았다
+    place(g, 'A', [t.pos[0], 0, t.pos[2] - 0.5]);
+    run(g, 0.1);
+  }
+  assert.deepEqual(g.players.A.slots.mods, [], '주운 수식은 가방으로');
+  assert.ok(g.handle('A', { t: 'loadout', effect: 't1', mods: ['w2', 'w4'] }).ok);
+  assert.equal(g.modCounts('A').BIG, 2);
+  assert.equal(g.handle('A', { t: 'loadout', effect: 't2', mods: [] }).ok, false, 'B의 단어');
+  assert.equal(g.handle('A', { t: 'loadout', effect: 'w2', mods: [] }).ok, false, '수식은 손(효과)에 못 든다');
+  assert.equal(g.handle('A', { t: 'loadout', effect: 't1', mods: ['t1'] }).ok, false, '효과는 수식 칸에 못 넣는다');
+  assert.equal(g.handle('A', { t: 'loadout', effect: 't1', mods: ['w2', 'w2'] }).ok, false, '같은 단어 두 번');
+  assert.ok(g.handle('A', { t: 'loadout', effect: null, mods: ['w3'] }).ok, '빈손도 된다');
+  assert.equal(g.players.A.slots.effect, null);
+  assert.equal(g.modCounts('A').BIG, 1);
+  assert.equal(TUNING.modSlots, 5);
+  assertTokenInvariant(assert, g, 10);
+});

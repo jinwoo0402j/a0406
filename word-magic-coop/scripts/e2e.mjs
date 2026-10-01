@@ -151,15 +151,19 @@ try {
   const a1 = await bodyOf(B, 'A');
   check('WASD 이동이 상대 화면에 반영', a1.p[2] - a0.p[2] > 2, `${(a1.p[2] - a0.p[2]).toFixed(2)}m`);
 
-  // 6) B가 Tab 편집창에서 <들기>를 내려놓는다 → 효과 칸이 비고, A 화면에 단어가 보인다
-  await B.keyboard.press('Tab');
+  // 6) B가 E로 가방을 열고, 핫바 칸의 <들기> 위에서 Q → 던져져 손이 비고, A 화면에 단어가 보인다
+  await B.bringToFront();
+  await B.keyboard.press('KeyE');
   await sleep(300);
   await B.screenshot({ path: `${OUT}/06-B-editor.png` });
-  await B.locator('.inv-card', { hasText: '들기' }).getByRole('button', { name: '내려놓기' }).click();
-  await sleep(400);
+  check('E로 마인크래프트식 가방이 열림(27칸 + 핫바 9칸 + 수식 칸 5칸)', await B.evaluate(() => document.querySelectorAll('#mc-main .mc-slot').length === 27 && document.querySelectorAll('#mc-hot .mc-slot').length === 9 && document.querySelectorAll('#mc-mods .mc-slot').length === 5));
+  await B.locator('#mc-hot .mc-slot[data-word="LIFT"]').hover();
+  await B.keyboard.press('KeyQ');
+  await sleep(500);
   const bEffect = await B.evaluate(() => window.__wm.latest.p.B.e);
-  check('장착한 효과를 내려놓으면 효과 칸이 빔', bEffect === null, String(bEffect));
-  await B.keyboard.press('Tab');
+  check('가방에서 손에 든 <들기> 위에 Q → 던져서 손이 빔', bEffect === null, String(bEffect));
+  await B.keyboard.press('KeyE');
+  await A.bringToFront();
   const t2OnA = await A.evaluate(() => window.__wm.latest.k.find((k) => k.id === 't2'));
   check('내려놓은 단어가 A 화면의 월드에 있음', !t2OnA.o && !!t2OnA.p);
   await sleep(300);
@@ -191,8 +195,42 @@ try {
 
   // [시각] <큰> × 3 + <파이어볼>: 날아가는 크기와 명중 폭발
   const g = srv.game;
-  g.token('w1').owner = 'A'; g.token('w1').pos = null; g.players.A.slots.effect = 'w1';
-  for (const id of ['w2', 'w3', 'w4']) { g.token(id).owner = 'A'; g.token(id).pos = null; g.players.A.slots.mods.push(id); }
+  // 손에 들기: 핫바에서 그 단어 칸을 고른다(가방 배치는 각 화면의 것이라 서버만 바꾸면 화면이 되돌린다)
+  const holdWord = async (page, word) => {
+    await page.waitForFunction((w) => window.__wm.hotbar.some((x) => x?.word === w), word, { timeout: 3000 }).catch(() => {});
+    await page.evaluate((w) => { const i = window.__wm.hotbar.findIndex((x) => x?.word === w); if (i >= 0) window.__wm.selectSlot(i); }, word);
+    await sleep(300);
+  };
+  g.token('w1').owner = 'A'; g.token('w1').pos = null;
+  for (const id of ['w2', 'w3', 'w4']) { g.token(id).owner = 'A'; g.token(id).pos = null; }
+  await holdWord(A, 'FIREBALL');
+  // [브라우저] 가방 창: 수식 묶음(큰×3)을 Shift+클릭하면 수식 칸으로, 결과에 주문이 보인다. 수식 칸을 Shift+클릭하면 가방으로
+  await A.keyboard.press('KeyE');
+  await sleep(300);
+  await A.locator('.mc-grid .mc-slot[data-word="BIG"]').first().click({ modifiers: ['Shift'] });
+  for (let i = 0; i < 20 && g.modCounts('A').BIG !== 3; i++) await sleep(100);
+  await sleep(150);
+  const r3 = await A.evaluate(() => document.getElementById('mc-result').textContent);
+  check('[브라우저] Shift+클릭으로 <큰>×3이 수식 칸에, 결과에 주문 표시', /큰> × 3 \+ <파이어볼>/.test(r3) && g.modCounts('A').BIG === 3, `${r3} / 서버 ${g.modCounts('A').BIG}`);
+  await A.screenshot({ path: `${OUT}/18-A-bag.png` });
+  await A.locator('#mc-mods .mc-slot[data-word="BIG"]').first().click({ modifiers: ['Shift'] });
+  for (let i = 0; i < 20 && g.modCounts('A').BIG !== 2; i++) await sleep(100);
+  await sleep(150);
+  const r2 = await A.evaluate(() => document.getElementById('mc-result').textContent);
+  check('[브라우저] 수식 칸을 Shift+클릭하면 가방으로(×2)', /큰> × 2 \+/.test(r2) && g.modCounts('A').BIG === 2, `${r2} / 서버 ${g.modCounts('A').BIG}`);
+  // 좌클릭으로 집어서 빈 수식 칸에 놓기(한 칸에 하나)
+  await A.locator('.mc-grid .mc-slot[data-word="BIG"]').first().click();
+  await A.locator('#mc-mods .mc-slot:not([data-word])').first().click();
+  for (let i = 0; i < 20 && g.modCounts('A').BIG !== 3; i++) await sleep(100); // 서버 반영 대기
+  check('[브라우저] 집어서 수식 칸에 놓기', g.modCounts('A').BIG === 3 && !(await A.evaluate(() => window.__wm.bag.cursor)), `서버 ${g.modCounts('A').BIG}`);
+  // 수식 칸에 효과 단어는 안 들어간다
+  await A.locator('#mc-hot .mc-slot[data-word="PUSH"]').click();
+  await A.locator('#mc-mods .mc-slot:not([data-word])').first().click();
+  const rejectToast = await A.evaluate(() => document.getElementById('toast').textContent);
+  check('[브라우저] 수식 칸에 효과 단어를 넣으면 거절 안내', /수식 단어만/.test(rejectToast), rejectToast);
+  await A.keyboard.press('KeyE'); // 닫으면 들고 있던 단어는 가방으로 돌아간다
+  await sleep(300);
+  check('[브라우저] 가방을 닫으면 커서에 든 단어는 가방으로', await A.evaluate(() => !window.__wm.bag.cursor && window.__wm.bag.slots.some((x) => x?.word === 'PUSH')));
   place('A', [-2.6, 0, 13]);
   await A.evaluate(() => window.__wm.setMode('AIM'));
   await sleep(600);
@@ -205,9 +243,14 @@ try {
   check('[시각] <큰>×3 파이어볼이 날아가 허수아비에 명중', g.body('dummy').hp < hp0, `hp ${hp0} → ${g.body('dummy').hp}`);
 
   // [브라우저] 같이 들기: A가 혼자 붙잡으면 안 올라가고, B가 합류하면 같이 들어 올린다(두 화면 확인)
-  g.token('w8').owner = 'A'; g.token('w8').pos = null; g.players.A.slots.effect = 'w8'; g.players.A.slots.mods = [];
-  g.token('t2').owner = 'B'; g.token('t2').pos = null; g.players.B.slots.effect = 't2';
+  g.token('w8').owner = 'A'; g.token('w8').pos = null;
+  g.token('t2').owner = 'B'; g.token('t2').pos = null;
   place('box2', [0, 0, 18]); place('A', [-1.6, 0, 15.4]); place('B', [1.6, 0, 15.4]); place('dummy', [-5, 0, 22]);
+  await holdWord(A, 'LIFT');
+  await holdWord(B, 'LIFT');
+  await A.evaluate(() => { window.__wm.toggleEditor(true); });
+  await A.locator('#mc-mods .mc-slot[data-word="BIG"]').first().click({ modifiers: ['Shift'] }).catch(() => {});
+  await A.evaluate(() => { window.__wm.toggleEditor(false); });
   await sleep(1100);
   await A.evaluate(() => { window.__wm.setMode('AIM'); window.__wm.setView(0, 0); window.__wm.aimAt('box2'); window.__wm.cast(); });
   await A.evaluate(() => window.__wm.setView(window.__wm.view.yaw, 0.5));
@@ -244,8 +287,8 @@ try {
   place('A', [0, 0, 8]); place('B', [0, 0, 11]); place('rock', [-3, 0, 6]); place('box1', [3, 0, 6]);
   await sleep(700);
   const bar = await A.evaluate(() => window.__wm.hotbar);
-  const liftSlot = bar.findIndex((x) => x.word === 'LIFT');
-  check('핫바에 가진 단어가 칸으로 보임', liftSlot >= 0 && bar.length >= 2, JSON.stringify(bar));
+  const liftSlot = bar.findIndex((x) => x?.word === 'LIFT');
+  check('핫바 9칸에 가진 단어가 보임', liftSlot >= 0 && bar.length === 9 && bar.filter(Boolean).length >= 2, JSON.stringify(bar));
   await A.keyboard.press(`Digit${liftSlot + 1}`);
   await A.evaluate(() => { window.__wm.setView(0, 0); window.__wm.aimAt('B'); });
   await sleep(200);

@@ -111,15 +111,20 @@ button.danger { background: #ff7b7b; }
 #crosshair.fire { border-color: #ff8a3d; }
 
 #badges { position: absolute; left: 16px; bottom: 16px; display: flex; gap: 8px; }
-/* 핫바(마인크래프트식 단어 칸) */
-#hotbar { position: absolute; left: 50%; bottom: 58px; transform: translateX(-50%); display: flex; gap: 6px; padding: 6px; background: rgba(47, 42, 61, 0.55); border-radius: 14px; }
-.hb-slot { position: relative; display: flex; align-items: center; justify-content: center; min-width: 76px; height: 56px; padding: 10px 10px 0; border-radius: 10px; background: rgba(255, 255, 255, 0.85); border: 3px solid transparent; }
-.hb-slot .word { font-size: 16px; min-height: 28px; padding: 3px 10px; }
-.hb-slot.sel { border-color: #ffe066; background: #fff; transform: translateY(-3px); }
-.hb-slot.eq::after { content: '손'; position: absolute; top: -9px; right: -6px; background: var(--action); color: #fff; font-size: 11px; padding: 1px 5px; border-radius: 999px; }
-.hb-num { position: absolute; left: 6px; top: 1px; font-size: 11px; font-weight: 700; color: var(--muted); }
-.hb-count { position: absolute; right: 5px; bottom: 1px; font-size: 13px; font-weight: 700; color: var(--ink); }
-.hb-empty { color: #fff; font-size: 14px; padding: 8px 12px; }
+/* 핫바(마인크래프트식, 화면 아래 9칸) */
+#hotbar { position: absolute; left: 50%; bottom: 52px; transform: translateX(-50%); display: flex; gap: 0; padding: 3px; background: rgba(30, 28, 36, 0.55); border: 2px solid rgba(20, 18, 26, 0.7); border-radius: 4px; }
+#hotbar .mc-slot { width: 54px; height: 54px; background: rgba(139, 139, 139, 0.55); }
+#hotbar .mc-slot.sel { outline: 3px solid #fff; outline-offset: -1px; z-index: 1; }
+
+/* 마인크래프트식 칸·아이템 */
+.mc-slot { position: relative; width: 52px; height: 52px; box-sizing: border-box; background: #8b8b8b; border: 2px solid; border-color: #373737 #fff #fff #373737; display: grid; place-items: center; user-select: none; }
+.mc-slot.hover { background: #a9a9a9; }
+.mc-slot.hand { border-color: #373737 #ffe066 #ffe066 #373737; }
+.mc-item { position: relative; width: 42px; height: 42px; border-radius: 6px; display: grid; place-items: center; color: #fff; font-size: 12px; font-weight: 700; line-height: 1.05; text-align: center; letter-spacing: -0.5px; box-shadow: inset -2px -2px 0 rgba(0, 0, 0, 0.25), inset 2px 2px 0 rgba(255, 255, 255, 0.35); pointer-events: none; }
+.mc-item.effect { background: var(--action); }
+.mc-item.mod { background: var(--target); }
+.mc-count { position: absolute; right: -3px; bottom: -4px; font-size: 15px; font-weight: 800; color: #fff; text-shadow: 2px 2px 0 #3f3f3f; }
+.mc-num { position: absolute; left: 3px; top: 1px; font-size: 10px; font-weight: 700; color: rgba(255, 255, 255, 0.85); text-shadow: 1px 1px 0 #3f3f3f; pointer-events: none; }
 .badge { background: var(--panel); border-radius: 999px; padding: 6px 12px; font-size: 15px; border: 1px solid var(--panel-border); }
 .badge.float { color: #1a8fb5; }
 .badge.shield { color: #6c5ce7; }
@@ -141,18 +146,26 @@ button.danger { background: #ff7b7b; }
 .summary-box summary { cursor: pointer; }
 .summary-box pre { margin: 8px 0; padding: 10px; background: #f5f2fb; border-radius: 12px; font-family: inherit; font-size: 14px; line-height: 1.5; color: var(--ink); white-space: pre-wrap; }
 
-/* 편집창 */
-#editor { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(40, 30, 70, 0.35); padding: 16px; }
-.slots { display: flex; align-items: center; justify-content: center; gap: 14px; }
-.slot-box { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.slot-name { font-size: 14px; color: var(--muted); }
-.plus { font-size: 30px; color: var(--muted); }
-#inventory { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-start; min-height: 60px; }
-.inv-card { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 16px; background: #f5f2fb; border: 2px solid transparent; min-width: 150px; pointer-events: auto; }
-.inv-card.equipped { border-color: #6c5ce7; }
-.inv-card .word { cursor: pointer; justify-content: center; }
-.inv-card .meta { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
-.inv-empty { color: var(--muted); font-size: 15px; }
+/* 가방 창(마인크래프트식) */
+#editor { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(16, 12, 28, 0.45); padding: 16px; }
+.mc-panel { background: #c6c6c6; border: 3px solid; border-color: #fff #555 #555 #fff; border-radius: 6px; padding: 14px 16px; box-shadow: 0 0 0 2px #000, 0 20px 50px rgba(0, 0, 0, 0.35); color: #3f3f3f; max-width: calc(100vw - 32px); }
+.mc-title { font-size: 15px; font-weight: 700; color: #3f3f3f; margin: 2px 0 6px; }
+.mc-sub { font-weight: 400; font-size: 13px; color: #5a5a5a; margin-left: 6px; }
+.mc-spell { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 12px; }
+.mc-col { display: flex; flex-direction: column; gap: 4px; }
+.mc-col.grow { flex: 1; min-width: 150px; }
+.mc-label { font-size: 12px; color: #4a4a4a; }
+.mc-row { display: flex; }
+.mc-op { font-size: 26px; color: #4a4a4a; padding-bottom: 10px; }
+.mc-result { min-height: 52px; box-sizing: border-box; padding: 6px 10px; background: #8b8b8b; border: 2px solid; border-color: #373737 #fff #fff #373737; color: #fff; font-size: 16px; font-weight: 700; display: flex; align-items: center; text-shadow: 1px 1px 0 #3f3f3f; }
+.mc-grid { display: grid; grid-template-columns: repeat(9, 52px); }
+.mc-hotrow { margin-top: 10px; }
+.mc-help { margin-top: 10px; font-size: 12px; color: #4a4a4a; max-width: 468px; line-height: 1.5; }
+.mc-cursor { position: fixed; left: 0; top: 0; pointer-events: none; transform: translate(-50%, -50%); z-index: 10; }
+.mc-tip { position: fixed; z-index: 11; pointer-events: none; background: rgba(16, 0, 16, 0.94); border: 2px solid #2d0a63; color: #fff; padding: 6px 9px; border-radius: 4px; font-size: 13px; line-height: 1.45; white-space: nowrap; }
+.mc-tip b { color: #ffe066; }
+.mc-panel .summary-box { color: #4a4a4a; }
+.mc-panel .summary-box pre { background: #b3b3b3; }
 .editor-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
 
 @keyframes fadein { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
