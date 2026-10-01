@@ -580,7 +580,9 @@ function onEvent(e) {
       if (e.by === S.me) S.holding = false; // 들기 시전이 거절되면 유지 상태도 푼다
       toast(e.reason);
       break;
-    case 'pickup':
+    case 'pickup': {
+      const pb = S.frame?.bodies.get(e.by);
+      if (pb) renderer.pickupFx([pb.p[0], pb.p[1] + 0.6, pb.p[2]]);
       if (e.from) {
         log(`${whoSubj(e.by)} ${who(e.from)}의 ${wlabel(e.word)}을(를) 받았어요`);
         if (e.by === S.me) toast(`${who(e.from)}에게서 ${wlabel(e.word)}을(를) 받았어요${e.equipped ? ' (바로 장착)' : ''}`, 'info');
@@ -589,6 +591,7 @@ function onEvent(e) {
         if (e.by === S.me) toast(`새 단어를 찾았어요! ${wlabel(e.word)}${WORDS[e.word].kind === KIND.MOD ? ' · E 가방에서 수식 칸에 넣어 봐요' : ''}`, 'info');
       }
       break;
+    }
     case 'throw':
       log(`${whoSubj(e.by)} ${wlabel(e.word)}을(를) 던졌어요`);
       break;
@@ -1315,6 +1318,12 @@ window.__wm = {
   joinByCode,
   get roomCode() { return $('room-code').textContent; },
   summaryText,
+  renderInfo() {
+    const i = renderer.renderer.info;
+    const c = { mesh: 0, sprite: 0, line: 0, inst: 0, shadow: 0 };
+    renderer.scene.traverseVisible((o) => { if (o.isInstancedMesh) c.inst++; else if (o.isMesh) { c.mesh++; if (o.castShadow) c.shadow++; } else if (o.isSprite) c.sprite++; else if (o.isLine) c.line++; });
+    return { calls: i.render.calls, triangles: i.render.triangles, programs: i.programs?.length, ...c };
+  },
   selectSlot(i) { inv().select(i); },
   throwSelected() { throwFromSlot(inv().sel, false); },
   get hotbar() { const I = inv(); return I.slots.slice(0, HOTBAR).map((x, i) => (x ? { i, word: x.word, n: x.tokens.length, sel: i === I.sel } : null)); },

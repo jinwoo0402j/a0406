@@ -25,6 +25,8 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: #bfe8f5; color: var(--ink); font-family: var(--font); }
 canvas#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+/* 화면 가장자리를 살짝 따뜻하게 감싸는 비네트(동숲 화면 느낌) */
+#hud::before { content: ''; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 58%, rgba(255, 236, 200, 0.28) 100%); }
 [hidden] { display: none !important; }
 
 button {

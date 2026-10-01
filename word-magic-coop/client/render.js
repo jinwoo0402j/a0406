@@ -3,10 +3,15 @@ import * as THREE from 'three';
 import { LEVEL, bodyDefs } from '../shared/level.js';
 import { WORDS } from '../shared/words.js';
 import { makeLabel } from './labels.js';
+import {
+  bendTree, toon, toonShared, grassTexture, cliffTexture, sandTexture, woodTexture, starTexture, puffTexture,
+  skyDome, cloud, water, stepWater, roundTree, palmTree, bush, flowers, villager, giftBox, mergeStatic,
+} from './look.js';
 
-const ACTION_COLOR = { PUSH: '#ff9a4d', PULL: '#3fcf8e', LIFT: '#4fd6ff', FIREBALL: '#ff5a2a' };
+const ACTION_COLOR = { PUSH: '#ff9f6e', PULL: '#45c2ad', LIFT: '#6fd3ff', FIREBALL: '#ff7a3d' };
 const KIND_COLOR = { effect: '#ff9f6e', mod: '#a98bff' }; // 효과 단어 / 수식 단어(HUD와 같은 색)
-const SCORCH = new THREE.Color('#3a2a22');
+const SCORCH = new THREE.Color('#4a3a32');
+const WATER_Y = -1.0;
 const now = () => performance.now() / 1000;
 
 function checkerTexture(a, b) {
@@ -37,31 +42,46 @@ export class Renderer {
   // low: 저사양 모드(그림자·안티앨리어싱 끔, 픽셀 비율 1). 주소에 ?gfx=low
   constructor(canvas, { low = false } = {}) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !low });
-    this.renderer.setPixelRatio(low ? 1 : Math.min(window.devicePixelRatio, 2));
+    this.pixelRatio = low ? 1 : Math.min(window.devicePixelRatio, 2);
+    this.renderer.setPixelRatio(this.pixelRatio);
+    this.perf = { acc: 0, frames: 0, level: 0 }; // 자동 화질 조절(느리면 해상도·그림자를 낮춘다)
     this.renderer.shadowMap.enabled = !low;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.low = low;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color('#cfe9ff');
-    this.scene.fog = new THREE.Fog('#cfe9ff', 40, 110);
-    this.camera = new THREE.PerspectiveCamera(65, 1, 0.1, 300);
+    // 모든 재질에 지면 휨(rolling log)을 건다(표시 전용)
+    const add = this.scene.add.bind(this.scene);
+    this.scene.add = (...objs) => { for (const o of objs) bendTree(o); return add(...objs); };
+    this.scene.background = new THREE.Color('#bfe7fb');
+    this.scene.fog = new THREE.Fog('#d9f1fb', 45, 140);
+    this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 500);
+    this.scene.add(skyDome());
 
-    const hemi = new THREE.HemisphereLight('#ffffff', '#b8c9a8', 1.6);
+    // 동숲처럼 따뜻하고 밝은 빛: 하늘빛·풀빛 반사 + 따뜻한 햇빛
+    const hemi = new THREE.HemisphereLight('#fff8ea', '#a6d77f', 1.9);
     this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight('#fff4e0', 2.2);
+    const sun = new THREE.DirectionalLight('#fff1d6', 2.0);
     sun.position.set(12, 28, 4);
     sun.target.position.set(0, 0, 18);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(1536, 1536);
     Object.assign(sun.shadow.camera, { left: -26, right: 26, top: 30, bottom: -30, near: 1, far: 80 });
     sun.shadow.bias = -0.0008;
     this.scene.add(sun, sun.target);
 
-    // 아래쪽 구름 바다(낙하 영역 표시)
-    const sea = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshBasicMaterial({ color: '#eef6ff' }));
-    sea.rotation.x = -Math.PI / 2;
-    sea.position.y = -9;
-    this.scene.add(sea);
+    // 섬 둘레 바다와 하늘의 뭉게구름
+    this.scene.add(water());
+    const sky = new THREE.Group();
+    for (let i = 0; i < 9; i++) {
+      const c = cloud(i * 7 + 3);
+      const a = (i / 9) * Math.PI * 2;
+      c.position.set(Math.cos(a) * 120, 26 + (i % 3) * 6, 18 + Math.sin(a) * 120);
+      sky.add(c);
+    }
+    this.clouds = [mergeStatic(sky)];
+    this.clouds[0].position.set(0, 0, 0);
+    this.scene.add(this.clouds[0]);
 
     this.bodyViews = new Map();
     this.tokenViews = new Map();
@@ -84,53 +104,80 @@ export class Renderer {
   }
 
   buildStatics() {
+    this.deco = new THREE.Group(); // 움직이지 않는 장식: 다 만든 뒤 재질별로 합친다
+    const grassTex = grassTexture();
+    const cliffTex = cliffTexture();
+    const cliff = (sx, sy) => {
+      const t = cliffTex.clone();
+      t.needsUpdate = true;
+      t.repeat.set(Math.max(1, sx / 2), Math.max(1, sy / 2));
+      return toon('#ffffff', { map: t });
+    };
     for (const s of LEVEL.statics) {
       const size = [s.max[0] - s.min[0], s.max[1] - s.min[1], s.max[2] - s.min[2]];
-      const geo = new THREE.BoxGeometry(...size);
+      const center = [(s.min[0] + s.max[0]) / 2, (s.min[1] + s.max[1]) / 2, (s.min[2] + s.max[2]) / 2];
+      if (s.id.startsWith('hedge')) {
+        // 울타리 → 동글동글한 덤불(충돌은 원래 상자 그대로)
+        const b = bush(size[0], s.min[0] < 0 ? 3 : 9);
+        b.position.set(center[0], s.min[1], center[2]);
+        this.deco.add(b);
+        continue;
+      }
       let mat;
       if (s.ground) {
-        const tex = checkerTexture(s.color, shade(s.color, 0.93));
-        const top = tex.clone();
+        // 땅: 윗면은 풀밭, 옆면은 흙 절벽
+        const top = grassTex.clone();
         top.needsUpdate = true;
-        top.repeat.set(size[0] / 2, size[2] / 2);
-        const side = new THREE.MeshStandardMaterial({ color: shade(s.color, 0.8), roughness: 0.95 });
-        const topMat = new THREE.MeshStandardMaterial({ map: top, roughness: 0.95 });
-        mat = [side, side, topMat, side, side, side];
+        top.repeat.set(size[0] / 4, size[2] / 4);
+        const topMat = toon(s.id === 'plateau' ? '#f4ffe0' : '#ffffff', { map: top });
+        const sideX = cliff(size[2], size[1]);
+        const sideZ = cliff(size[0], size[1]);
+        mat = [sideX, sideX, topMat, toon('#c99a66'), sideZ, sideZ];
+      } else if (s.id.startsWith('wall')) {
+        // 벽 → 풀이 덮인 언덕 절벽
+        mat = cliff(Math.max(size[0], size[2]), size[1]);
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(size[0] + 0.3, 0.35, size[2] + 0.3), toonShared('#7fcd5c'));
+        cap.position.set(center[0], s.max[1] + 0.1, center[2]);
+        cap.castShadow = true;
+        this.deco.add(cap);
       } else {
-        mat = new THREE.MeshStandardMaterial({ color: s.color, roughness: 0.85 });
+        // 낮은 턱: 둥근 돌 디딤판
+        mat = toon('#d9d3c4');
       }
-      const m = new THREE.Mesh(geo, mat);
-      m.position.set((s.min[0] + s.max[0]) / 2, (s.min[1] + s.max[1]) / 2, (s.min[2] + s.max[2]) / 2);
+      const m = new THREE.Mesh(new THREE.BoxGeometry(...size), mat);
+      m.position.set(...center);
       m.receiveShadow = true;
       m.castShadow = !s.ground;
       this.scene.add(m);
     }
-
+    this.buildIsland();
+    this.scene.add(mergeStatic(this.deco));
     // 도착 구역
     const g = LEVEL.goal;
     const gs = [g.max[0] - g.min[0], 0.05, g.max[2] - g.min[2]];
     const pad = new THREE.Mesh(
       new THREE.BoxGeometry(...gs),
-      new THREE.MeshBasicMaterial({ color: '#7be3a4', transparent: true, opacity: 0.45 }),
+      new THREE.MeshBasicMaterial({ color: '#9ff0c4', transparent: true, opacity: 0.45 }),
     );
     pad.position.set((g.min[0] + g.max[0]) / 2, g.min[1] + 0.03, (g.min[2] + g.max[2]) / 2);
     this.scene.add(pad);
     this.goalPad = pad;
     const edges = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.BoxGeometry(gs[0], 2.2, gs[2])),
-      new THREE.LineBasicMaterial({ color: '#3cc47c', transparent: true, opacity: 0.6 }),
+      new THREE.LineBasicMaterial({ color: '#45c2ad', transparent: true, opacity: 0.45 }),
     );
     edges.position.set(pad.position.x, g.min[1] + 1.1, pad.position.z);
     this.scene.add(edges);
-    const flagPole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.4), new THREE.MeshStandardMaterial({ color: '#ffffff' }));
+    const flagPole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.4), toon('#ffffff'));
     flagPole.position.set(g.max[0] - 0.3, g.min[1] + 1.2, g.max[2] - 0.3);
-    const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.55), new THREE.MeshStandardMaterial({ color: '#ff8a3d', side: THREE.DoubleSide }));
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.55), toon('#ff9f6e', { side: THREE.DoubleSide }));
     flag.position.set(flagPole.position.x - 0.45, g.min[1] + 2.1, flagPole.position.z);
     this.flag = flag;
     this.scene.add(flagPole, flag);
 
     for (const l of LEVEL.labels) {
-      const sprite = makeLabel(l.text, { bg: 'rgba(255,255,255,0.85)', fg: '#5b4a8a', size: 64, height: 0.7, radius: 30 });
+      // 나무 표지판 느낌
+      const sprite = makeLabel(l.text, { bg: '#f3dcae', fg: '#6b563c', size: 64, height: 0.7, radius: 30, border: '#c99a66' });
       const sign = new THREE.Mesh(
         new THREE.PlaneGeometry(sprite.scale.x, sprite.scale.y),
         new THREE.MeshBasicMaterial({ map: sprite.material.map, transparent: true }),
@@ -141,13 +188,56 @@ export class Renderer {
     }
   }
 
+  // 섬: 모래사장, 나무·야자수, 꽃밭(표시 전용, 충돌 없음)
+  buildIsland() {
+    const sandTex = sandTexture();
+    sandTex.repeat.set(12, 24);
+    const beach = new THREE.Mesh(new THREE.BoxGeometry(26, 0.6, 52), toon('#ffffff', { map: sandTex }));
+    beach.position.set(0, -0.95, 18);
+    beach.receiveShadow = true;
+    this.scene.add(beach);
+    if (this.low) return;
+    const deco = this.deco;
+    let seed = 1;
+    // 벽(언덕) 바깥쪽 둥근 나무
+    for (let z = -1; z <= 25; z += 4.2) {
+      for (const x of [-10.2, 10.2]) {
+        const t = roundTree(seed++, 1.1);
+        t.position.set(x + Math.sin(z) * 0.5, -0.65, z);
+        deco.add(t);
+      }
+    }
+    for (let x = -7.5; x <= 7.5; x += 3.6) {
+      const t = roundTree(seed++, 1.2);
+      t.position.set(x, -0.65, -4.2);
+      deco.add(t);
+    }
+    // 도착 쪽 모래사장의 야자수
+    for (const [x, z] of [[-9.5, 31], [9.6, 33.5], [-8.6, 39], [8.4, 40.5], [0, 42.5]]) {
+      const p = palmTree(seed++);
+      p.position.set(x, -0.65, z);
+      deco.add(p);
+    }
+    // 꽃밭: 벽 가장자리와 단차 위 모퉁이
+    const spots = [];
+    let r = 17;
+    const rnd = () => { r = (r * 16807) % 2147483647; return (r - 1) / 2147483646; };
+    for (let i = 0; i < 46; i++) {
+      const side = i % 2 ? 1 : -1;
+      spots.push([side * (6.4 + rnd() * 1.4), 0, -1 + rnd() * 23]);
+    }
+    for (let i = 0; i < 16; i++) spots.push([(i % 2 ? 1 : -1) * (4.2 + rnd() * 1.5), 1.6, 36.2 + rnd() * 1.6]);
+    deco.add(flowers(spots));
+  }
+
   buildBodies() {
     for (const d of bodyDefs()) {
       const group = new THREE.Group();
       group.visible = false; // 스냅숏에 있는 것만 보인다(접속한 자리만 캐릭터가 있다)
       const mats = [];
       const std = (color, extra = {}) => {
-        const m = new THREE.MeshStandardMaterial({ color, roughness: 0.6, ...extra });
+        const { roughness, metalness, flatShading, ...rest } = extra; // 툰 재질에는 금속감·거칠기가 없다
+        const m = toon(color, { flatShading: !!flatShading, ...rest });
         m.userData.baseEmissive = m.emissive.clone();
         m.userData.baseIntensity = m.emissiveIntensity;
         m.userData.baseColor = m.color.clone();
@@ -157,56 +247,32 @@ export class Renderer {
       const h = d.size[1];
       let visual;
       if (d.kind === 'player') {
-        visual = new THREE.Group();
+        // 동물 주민 같은 캐릭터: 자리마다 다른 동물, 큰 머리·둥근 몸·짧은 팔다리
         const col = d.color;
-        const body = new THREE.Mesh(new THREE.SphereGeometry(0.4, 24, 16), std(col));
-        body.scale.set(1, 0.95, 1);
-        body.position.y = -h / 2 + 0.4;
-        const head = new THREE.Mesh(new THREE.SphereGeometry(0.33, 24, 16), std(shade(col, 1.12)));
-        head.position.y = -h / 2 + 0.95;
-        const eyeMat = new THREE.MeshBasicMaterial({ color: '#2f2a3d' });
-        const cheekMat = new THREE.MeshBasicMaterial({ color: '#ffb3c1' });
-        const mkEye = (x) => {
-          const e = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), eyeMat);
-          e.position.set(x, 0.03, 0.3);
-          e.scale.set(1, 1.4, 0.6);
-          return e;
-        };
-        const mkCheek = (x) => {
-          const e = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), cheekMat);
-          e.position.set(x, -0.07, 0.29);
-          e.scale.set(1.3, 0.7, 0.4);
-          return e;
-        };
-        head.add(mkEye(-0.11), mkEye(0.11), mkCheek(-0.18), mkCheek(0.18));
-        const hat = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.4, 20), std(shade(col, 0.75)));
-        hat.position.y = 0.38;
-        hat.rotation.z = 0.15;
-        head.add(hat);
-        const feet = [-0.17, 0.17].map((x) => {
-          const f = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 8), std(shade(col, 0.7)));
-          f.scale.set(1, 0.6, 1.3);
-          f.position.set(x, -h / 2 + 0.06, 0.05);
-          return f;
-        });
-        visual.add(body, head, ...feet);
-        const tag = makeLabel(d.id, { bg: col, size: 44, height: 0.34 });
-        tag.position.y = h / 2 + 0.45;
+        const v = villager(d.id, col, h, (c) => std(c));
+        visual = v.group;
+        group.userData.rig = v;
+        const tag = makeLabel(d.id, { bg: col, size: 44, height: 0.34, border: '#ffffff' });
+        tag.position.y = h / 2 + 0.55;
         group.add(tag);
         group.userData.tag = tag;
       } else if (d.kind === 'rock') {
-        visual = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 0), std('#a3a3b5', { flatShading: true }));
-        visual.scale.set(1, 0.85, 1);
+        // 동글동글한 바위
+        visual = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 1), std('#b9b6c4', { flatShading: true }));
+        visual.scale.set(1, 0.8, 0.95);
       } else if (d.kind === 'box') {
-        visual = new THREE.Mesh(new THREE.BoxGeometry(...d.size), std('#d19a5f'));
-        const edge = new THREE.LineSegments(new THREE.EdgesGeometry(visual.geometry), new THREE.LineBasicMaterial({ color: '#8a5a2b' }));
-        visual.add(edge);
+        // 나무 상자
+        visual = new THREE.Mesh(new THREE.BoxGeometry(...d.size), std('#ffffff', { map: woodTexture('#e8b276') }));
       } else if (d.kind === 'heavy') {
         // 무거운 상자: <세게> 없이는 들 수 없다
-        visual = new THREE.Mesh(new THREE.BoxGeometry(...d.size), std('#6d7486', { metalness: 0.3, roughness: 0.5 }));
-        const edge = new THREE.LineSegments(new THREE.EdgesGeometry(visual.geometry), new THREE.LineBasicMaterial({ color: '#2f3440' }));
-        visual.add(edge);
-        const tag = makeLabel('무거운 상자', { bg: '#4a5063', size: 36, height: 0.26 });
+        // 무거운 돌 상자(쇠띠 두른 큰 상자)
+        visual = new THREE.Mesh(new THREE.BoxGeometry(...d.size), std('#ffffff', { map: woodTexture('#8f96a8') }));
+        for (const y of [-0.25, 0.25]) {
+          const band = new THREE.Mesh(new THREE.BoxGeometry(d.size[0] + 0.03, 0.09, d.size[2] + 0.03), std('#5d6475'));
+          band.position.y = y;
+          visual.add(band);
+        }
+        const tag = makeLabel('무거운 상자', { bg: '#7d859a', size: 36, height: 0.26, border: '#ffffff' });
         tag.position.y = h / 2 + 0.35;
         group.add(tag);
       } else if (d.kind === 'dummy') {
@@ -230,25 +296,23 @@ export class Renderer {
         visual.add(pole, torso, head, arms);
         const bar = new THREE.Group();
         const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.12), new THREE.MeshBasicMaterial({ color: '#2f2a3d', transparent: true, opacity: 0.7, depthWrite: false }));
-        const fill = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.08), new THREE.MeshBasicMaterial({ color: '#ff5a5a', depthWrite: false }));
+        const fill = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.08), new THREE.MeshBasicMaterial({ color: '#ff9f6e', depthWrite: false }));
         fill.position.z = 0.001;
         bar.add(bg, fill);
         bar.position.y = h / 2 + 0.3;
         group.add(bar);
         group.userData.hpBar = { bar, fill };
-        const tag = makeLabel('허수아비', { bg: '#b0883a', size: 36, height: 0.26 });
+        const tag = makeLabel('허수아비', { bg: '#c99a5e', size: 36, height: 0.26, border: '#ffffff' });
         tag.position.y = h / 2 + 0.6;
         group.add(tag);
       } else {
-        // 목표 짐: 표식이 있는 금색 상자
-        visual = new THREE.Mesh(new THREE.BoxGeometry(...d.size), std('#ffcf4a'));
-        const band = new THREE.Mesh(new THREE.BoxGeometry(d.size[0] + 0.02, 0.18, d.size[2] + 0.02), std('#ff8a3d'));
-        visual.add(band);
-        const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.22), std('#ff8a3d', { emissive: '#ff8a3d', emissiveIntensity: 0.3 }));
-        star.position.y = d.size[1] / 2 + 0.35;
+        // 목표 짐: 리본 단 선물 상자 + 반짝이는 별
+        visual = giftBox(d.size, (c) => std(c));
+        const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.2), std('#ffd95a', { emissive: '#ffb347', emissiveIntensity: 0.35 }));
+        star.position.y = d.size[1] / 2 + 0.55;
         visual.add(star);
         group.userData.star = star;
-        const tag = makeLabel('짐', { bg: '#ff8a3d', size: 40, height: 0.3 });
+        const tag = makeLabel('짐', { bg: '#ff9fb4', size: 40, height: 0.3, border: '#ffffff' });
         tag.position.y = h / 2 + 0.9;
         group.add(tag);
       }
@@ -258,7 +322,7 @@ export class Renderer {
       // 들려 있음 표시 고리
       const ring = new THREE.Mesh(
         new THREE.TorusGeometry(Math.max(d.size[0], d.size[2]) * 0.7, 0.045, 8, 32),
-        new THREE.MeshBasicMaterial({ color: ACTION_COLOR.LIFT, transparent: true, opacity: 0.85 }),
+        new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.85 }),
       );
       ring.rotation.x = Math.PI / 2;
       ring.position.y = -h / 2 - 0.08;
@@ -277,47 +341,49 @@ export class Renderer {
       }
 
       this.scene.add(group);
-      this.bodyViews.set(d.id, { group, visual, mats, ring, shield, def: d, baseScale: visual.scale.clone(), anim: null, smokeAt: 0 });
+      this.bodyViews.set(d.id, { group, visual, mats, ring, shield, def: d, baseScale: visual.scale.clone(), anim: null, smokeAt: 0, phase: 0, dustAt: 0, wasG: true, wasAbove: true });
     }
   }
 
   buildRing() {
     // 「주변의 대상들을」 반경 표시
     const ring = new THREE.Mesh(
-      new THREE.RingGeometry(2.92, 3.0, 64),
-      new THREE.MeshBasicMaterial({ color: '#9b7bff', transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }),
+      new THREE.RingGeometry(2.88, 3.0, 64),
+      new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }),
     );
     ring.rotation.x = -Math.PI / 2;
     ring.visible = false;
     const disk = new THREE.Mesh(
       new THREE.CircleGeometry(3, 64),
-      new THREE.MeshBasicMaterial({ color: '#9b7bff', transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: '#fff3a8', transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false }),
     );
     ring.add(disk);
     this.scene.add(ring);
     this.nearbyRing = ring;
   }
 
+  // 바닥의 단어: 동숲에서 떨어진 물건처럼 잎사귀 + 위에 단어 이름표
   tokenView(id, word) {
     let v = this.tokenViews.get(id);
     if (v) return v;
     const w = WORDS[word];
     const group = new THREE.Group();
     const label = makeLabel(w.label, { bg: KIND_COLOR[w.kind], size: 56, height: 0.46, border: '#ffffff' });
-    label.position.y = 0.75;
+    label.position.y = 0.8;
     group.add(label);
-    const glow = new THREE.Mesh(
-      new THREE.CircleGeometry(0.45, 32),
-      new THREE.MeshBasicMaterial({ color: KIND_COLOR[w.kind], transparent: true, opacity: 0.45, depthWrite: false }),
+    const shadow = new THREE.Mesh(
+      new THREE.CircleGeometry(0.32, 24),
+      new THREE.MeshBasicMaterial({ color: '#000000', transparent: true, opacity: 0.12, depthWrite: false }),
     );
-    glow.rotation.x = -Math.PI / 2;
-    glow.position.y = 0.02;
-    group.add(glow);
-    const gem = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.14),
-      new THREE.MeshStandardMaterial({ color: KIND_COLOR[w.kind], emissive: KIND_COLOR[w.kind], emissiveIntensity: 0.5 }),
-    );
-    gem.position.y = 0.3;
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.02;
+    group.add(shadow);
+    const gem = new THREE.Group();
+    const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 8), toon(KIND_COLOR[w.kind]));
+    leaf.scale.set(1, 0.35, 1.45);
+    gem.add(leaf);
+    gem.position.y = 0.28;
+    gem.rotation.x = 0.35;
     group.add(gem);
     this.scene.add(group);
     v = { group, label, gem, base: label.scale.clone() };
@@ -331,9 +397,12 @@ export class Renderer {
     if (v) v.anim = { type, t0: now() };
   }
 
+  // 반짝이 별(동숲 효과처럼 통통 튀어 나간다)
   burst(pos, color, n, speed, up, life = 0.55, size = 0.07) {
     for (let i = 0; i < n; i++) {
-      const p = new THREE.Mesh(new THREE.SphereGeometry(size, 6, 4), new THREE.MeshBasicMaterial({ color, transparent: true }));
+      const p = new THREE.Sprite(new THREE.SpriteMaterial({ map: starTexture(), color, transparent: true, depthWrite: false }));
+      p.scale.setScalar(size * 4.2);
+      p.userData.base = size * 4.2;
       p.position.set(...pos);
       const ang = (i / n) * Math.PI * 2 + Math.random() * 0.3;
       const vel = new THREE.Vector3(Math.cos(ang) * speed, up + Math.random() * up, Math.sin(ang) * speed);
@@ -342,15 +411,41 @@ export class Renderer {
     }
   }
 
-  beam(a, b, color, life = 0.3) {
-    const beam = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.05, 0.05, a.distanceTo(b), 6),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthWrite: false }),
-    );
-    beam.position.copy(a).add(b).multiplyScalar(0.5);
-    beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-    this.scene.add(beam);
-    this.fx.push({ obj: beam, life, age: 0, kind: 'fade' });
+  // 빛줄기 대신 별 몇 개가 줄지어 날아간다
+  beam(a, b, color, life = 0.35) {
+    const n = Math.max(3, Math.round(a.distanceTo(b) / 0.6));
+    for (let i = 1; i <= n; i++) {
+      const p = new THREE.Sprite(new THREE.SpriteMaterial({ map: starTexture(), color, transparent: true, depthWrite: false }));
+      p.position.copy(a).lerp(b, i / (n + 1));
+      p.scale.setScalar(0.28);
+      p.userData.base = 0.28;
+      this.scene.add(p);
+      this.fx.push({ obj: p, life: life + i * 0.03, age: -i * 0.025, kind: 'twinkle' });
+    }
+  }
+
+  // 뭉게 연기(걸을 때 먼지, 착지, 폭발, 물보라)
+  puffs(pos, n, { color = '#ffffff', size = 0.35, spread = 0.3, rise = 0.6, life = 0.6, opacity = 0.9 } = {}) {
+    for (let i = 0; i < n; i++) {
+      const p = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTexture(), color, transparent: true, opacity, depthWrite: false }));
+      const a = (i / n) * Math.PI * 2 + Math.random();
+      p.position.set(pos[0] + Math.cos(a) * spread * Math.random(), pos[1], pos[2] + Math.sin(a) * spread * Math.random());
+      p.scale.setScalar(size);
+      this.scene.add(p);
+      this.fx.push({ obj: p, life: life * (0.8 + Math.random() * 0.4), age: 0, kind: 'puff', base: size, op: opacity,
+        vel: new THREE.Vector3(Math.cos(a) * spread * 1.5, rise * (0.6 + Math.random() * 0.6), Math.sin(a) * spread * 1.5) });
+    }
+  }
+
+  // 물에 빠짐: 물보라
+  splashFx(pos) {
+    this.puffs([pos[0], -0.95, pos[2]], 10, { color: '#e8fbff', size: 0.6, spread: 0.6, rise: 2.2, life: 0.7 });
+    this.burst([pos[0], -0.9, pos[2]], new THREE.Color('#9fe6f5'), 8, 2, 2.5, 0.6, 0.08);
+  }
+
+  // 단어를 주움: 반짝
+  pickupFx(pos) {
+    this.burst(pos, new THREE.Color('#ffe066'), 10, 1.4, 1.2, 0.6, 0.07);
   }
 
   // 시전 효과: 밀치기·당기기는 빛줄기·튀는 입자, 주변 모드는 퍼지는 고리, 파이어볼은 손끝 불꽃
@@ -392,21 +487,25 @@ export class Renderer {
   }
 
   // 파이어볼 명중 폭발(반경 = 실제 판정 반경)
+  // 만화 같은 뭉게 폭발: 통통한 공 몇 개가 부풀었다 줄고, 연기·별이 튄다(크기 = 실제 판정 반경)
   boomFx(e) {
-    const ball = new THREE.Mesh(
-      new THREE.SphereGeometry(1, 20, 14),
-      new THREE.MeshBasicMaterial({ color: '#ff7a2a', transparent: true, opacity: 0.6, depthWrite: false }),
-    );
-    ball.position.set(...e.pos);
-    ball.userData.maxScale = e.blast;
-    this.scene.add(ball);
-    this.fx.push({ obj: ball, life: 0.4, age: 0, kind: 'boom' });
-    this.burst(e.pos, new THREE.Color('#ffb347'), 16, 3, 1.5, 0.6, 0.08);
+    const colors = ['#ffd95a', '#ffa25a', '#ff7a3d', '#fff3c4'];
+    for (let i = 0; i < 6; i++) {
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), toon(colors[i % colors.length], { transparent: true, opacity: 0.95 }));
+      const a = (i / 6) * Math.PI * 2;
+      const off = i === 0 ? 0 : e.blast * 0.45;
+      ball.position.set(e.pos[0] + Math.cos(a) * off, e.pos[1] + (i === 0 ? 0 : 0.15), e.pos[2] + Math.sin(a) * off);
+      ball.userData.maxScale = e.blast * (i === 0 ? 0.85 : 0.5);
+      this.scene.add(ball);
+      this.fx.push({ obj: ball, life: 0.45 + i * 0.03, age: -i * 0.02, kind: 'boom' });
+    }
+    this.puffs(e.pos, 8, { color: '#ffffff', size: 0.7, spread: e.blast * 0.6, rise: 1.2, life: 0.8 });
+    this.burst(e.pos, new THREE.Color('#ffd95a'), 12, 3, 1.5, 0.6, 0.08);
     for (const h of e.hits) this.poke(h.id, 'hit');
   }
 
   fizzleFx(pos) {
-    this.burst(pos, new THREE.Color('#9a9aa8'), 6, 0.6, 0.6, 0.4, 0.06);
+    this.puffs(pos, 5, { color: '#f2eee6', size: 0.4, spread: 0.2, rise: 0.6, life: 0.5 });
   }
 
   releaseFx(pos) {
@@ -426,7 +525,7 @@ export class Renderer {
       const k = f.age / f.life;
       if (k >= 1) {
         this.scene.remove(f.obj);
-        f.obj.geometry.dispose();
+        if (!f.obj.isSprite) f.obj.geometry.dispose();
         f.obj.material.dispose();
         return false;
       }
@@ -435,18 +534,53 @@ export class Renderer {
         f.obj.scale.set(s, s, s);
         f.obj.material.opacity = 0.8 * (1 - k);
       } else if (f.kind === 'boom') {
-        const sc = 0.2 + (f.obj.userData.maxScale - 0.2) * Math.min(1, k * 1.8);
+        if (k < 0) { f.obj.visible = false; return true; }
+        f.obj.visible = true;
+        // 통통하게 부풀었다(넘침) 줄어든다
+        const grow = Math.min(1, k * 2.4);
+        const pop = grow < 1 ? 1 - (1 - grow) ** 3 : 1 - (k - 0.42) * 1.6;
+        const sc = Math.max(0.01, f.obj.userData.maxScale * Math.max(0, pop) * 1.1);
         f.obj.scale.set(sc, sc, sc);
-        f.obj.material.opacity = 0.6 * (1 - k);
+        f.obj.material.opacity = 0.95 * Math.min(1, 1.6 * (1 - k));
       } else if (f.kind === 'particle') {
         f.obj.position.addScaledVector(f.vel, dt);
         f.vel.y -= 3 * dt;
+        f.obj.material.opacity = 1 - k;
+        if (f.obj.isSprite) { f.obj.material.rotation += dt * 4; f.obj.scale.setScalar(f.obj.userData.base * (1 - k * 0.6)); }
+      } else if (f.kind === 'puff') {
+        f.obj.position.addScaledVector(f.vel, dt);
+        f.vel.multiplyScalar(1 - dt * 2.5);
+        f.obj.scale.setScalar(f.base * (1 + k * 1.4));
+        f.obj.material.opacity = f.op * (1 - k) * (1 - k);
+      } else if (f.kind === 'twinkle') {
+        if (k < 0) { f.obj.visible = false; return true; }
+        f.obj.visible = true;
+        f.obj.material.rotation += dt * 6;
+        f.obj.scale.setScalar(f.obj.userData.base * (1 + Math.sin(k * Math.PI) * 0.6));
         f.obj.material.opacity = 1 - k;
       } else {
         f.obj.material.opacity = 0.9 * (1 - k);
       }
       return true;
     });
+  }
+
+  // 느린 기기(내장 그래픽·소프트웨어 렌더링)에서는 2초마다 평균 프레임을 보고 한 단계씩 낮춘다:
+  // 1) 해상도 75% → 2) 그림자 끄기 → 3) 해상도 60%. 한 번 낮추면 다시 올리지 않는다(깜빡임 방지).
+  autoQuality(dt) {
+    const p = this.perf;
+    p.acc += dt;
+    p.frames += 1;
+    if (p.acc < 2) return;
+    const fps = p.frames / p.acc;
+    p.acc = 0;
+    p.frames = 0;
+    if (fps >= 28 || p.level >= 3) return;
+    p.level += 1;
+    if (p.level === 1) this.renderer.setPixelRatio(Math.max(0.6, this.pixelRatio * 0.75));
+    if (p.level === 2) { this.renderer.shadowMap.enabled = false; this.scene.traverse((o) => { if (o.material) [].concat(o.material).forEach((m) => { m.needsUpdate = true; }); }); }
+    if (p.level === 3) this.renderer.setPixelRatio(0.6);
+    this.resize();
   }
 
   // frame: { bodies: Map(id → {p,y,f,i}), tokens: [{id,w,o,p}], me, preview: {ok:Set, bad:Set}, nearby, camera: {pos, look}, cleared }
@@ -498,16 +632,36 @@ export class Renderer {
         v.shield.material.opacity = 0.18 + 0.1 * Math.sin(t * 8);
       }
       if (v.def.kind === 'player') {
-        // 걷는 느낌의 가벼운 흔들림
+        // 걷기: 팔다리를 흔들고 통통 튄다, 발밑에 먼지 뭉게
         const moving = s.speed > 0.5 && s.g;
-        v.visual.position.y = moving ? Math.abs(Math.sin(t * 12)) * 0.06 : 0;
+        const rig = v.group.userData.rig;
+        v.phase += dt * (moving ? Math.min(14, 4 + s.speed * 2.2) : 0);
+        const amt = moving ? 0.7 : 0;
+        const sw = Math.sin(v.phase) * amt;
+        rig.legs[0].rotation.x = sw;
+        rig.legs[1].rotation.x = -sw;
+        rig.arms[0].rotation.x = -sw * 0.9;
+        rig.arms[1].rotation.x = sw * 0.9;
+        rig.head.rotation.z = moving ? Math.sin(v.phase) * 0.06 : Math.sin(t * 1.5) * 0.03;
+        v.visual.position.y = moving ? Math.abs(Math.sin(v.phase)) * 0.07 : Math.sin(t * 2) * 0.008;
+        const feet = [s.p[0], s.p[1] - v.def.size[1] / 2 + 0.05, s.p[2]];
+        if (moving && t - v.dustAt > 0.24) {
+          v.dustAt = t;
+          this.puffs(feet, 1, { color: '#fffaf0', size: 0.28, spread: 0.1, rise: 0.4, life: 0.45, opacity: 0.8 });
+        }
+        if (s.g && !v.wasG) this.puffs(feet, 5, { color: '#fffaf0', size: 0.32, spread: 0.35, rise: 0.3, life: 0.45, opacity: 0.85 });
+        v.wasG = !!s.g;
         v.group.userData.tag.visible = id !== frame.me; // 내 이름표는 시야를 가리므로 숨긴다
       }
+      // 바다에 빠지면 물보라
+      const above = s.p[1] > WATER_Y;
+      if (v.wasAbove && !above) this.splashFx(s.p);
+      v.wasAbove = above;
       if (v.group.userData.star) v.group.userData.star.rotation.y = t * 1.5;
       const hl = frame.preview?.ok.has(id) ? 'ok' : frame.preview?.bad.has(id) ? 'bad' : null;
       for (const m of v.mats) {
         if (hl === 'ok') { m.emissive.set('#ffd84d'); m.emissiveIntensity = 0.35 + 0.2 * Math.sin(t * 10); }
-        else if (hl === 'bad') { m.emissive.set('#ff4040'); m.emissiveIntensity = 0.3; }
+        else if (hl === 'bad') { m.emissive.set('#ff8f7a'); m.emissiveIntensity = 0.3; }
         else { m.emissive.copy(m.userData.baseEmissive); m.emissiveIntensity = m.userData.baseIntensity; }
       }
     }
@@ -521,7 +675,8 @@ export class Renderer {
       v.group.visible = true;
       v.group.position.set(tk.p[0], tk.p[1], tk.p[2]);
       v.label.position.y = 0.8 + Math.sin(t * 2 + tk.id.charCodeAt(1)) * 0.08;
-      v.gem.rotation.y = t * 2;
+      v.gem.rotation.y = t * 1.2;
+      v.gem.position.y = 0.28 + Math.sin(t * 2.4 + tk.id.charCodeAt(1)) * 0.04;
       v.label.material.opacity = frame.pickable === tk.id ? 1 : 0.92;
       const k = frame.pickable === tk.id ? 1.15 : 1;
       v.label.scale.set(v.base.x * k, v.base.y * k, 1);
@@ -543,8 +698,9 @@ export class Renderer {
       live.add(pr.id);
       let pv = this.projViews.get(pr.id);
       if (!pv) {
-        const core = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), new THREE.MeshBasicMaterial({ color: '#ffd27a' }));
-        const halo = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), new THREE.MeshBasicMaterial({ color: '#ff5a2a', transparent: true, opacity: 0.35, depthWrite: false }));
+        // 통통한 불덩이: 노란 속 + 주황 겉
+        const core = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), toon('#ffe27a', { emissive: '#ffb347', emissiveIntensity: 0.6 }));
+        const halo = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), new THREE.MeshBasicMaterial({ color: '#ff8a4d', transparent: true, opacity: 0.45, depthWrite: false }));
         this.scene.add(core, halo);
         pv = { core, halo, trailAt: 0 };
         this.projViews.set(pr.id, pv);
@@ -553,9 +709,9 @@ export class Renderer {
       pv.halo.position.set(...pr.p);
       pv.core.scale.setScalar(pr.r);
       pv.halo.scale.setScalar(pr.r * (1.7 + 0.2 * Math.sin(t * 30)));
-      if (t - pv.trailAt > 0.03) {
+      if (t - pv.trailAt > 0.04) {
         pv.trailAt = t;
-        this.burst(pr.p, new THREE.Color('#ff8a3d'), 1, 0.2, 0.2, 0.3, pr.r * 0.5);
+        this.puffs(pr.p, 1, { color: Math.random() > 0.5 ? '#ffd27a' : '#ffa25a', size: pr.r * 2.2, spread: 0.05, rise: 0.4, life: 0.35, opacity: 0.85 });
       }
     }
     for (const [id, pv] of this.projViews) {
@@ -574,14 +730,14 @@ export class Renderer {
         held.add(key);
         let tv = this.tethers.get(key);
         if (!tv) {
-          tv = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1, 6), new THREE.MeshBasicMaterial({ color: '#4fd6ff', transparent: true, opacity: 0.65, depthWrite: false }));
+          tv = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1, 8), new THREE.MeshBasicMaterial({ color: '#9fe6ff', transparent: true, opacity: 0.65, depthWrite: false }));
           this.scene.add(tv);
           this.tethers.set(key, tv);
         }
         const a = new THREE.Vector3(from.p[0], from.p[1] + 0.3, from.p[2]);
         const b = new THREE.Vector3(...s.p);
         tv.visible = true;
-        tv.material.color.set(s.hv ? '#ff6b6b' : '#4fd6ff');
+        tv.material.color.set(s.hv ? '#ffa08a' : '#9fe6ff');
         tv.scale.set(1, Math.max(0.01, a.distanceTo(b)), 1);
         tv.position.copy(a).add(b).multiplyScalar(0.5);
         tv.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
@@ -593,6 +749,9 @@ export class Renderer {
     this.flag.rotation.y = Math.sin(t * 2) * 0.25;
     this.goalPad.material.opacity = frame.cleared ? 0.75 : 0.35 + 0.1 * Math.sin(t * 3);
 
+    this.autoQuality(dt);
+    stepWater(t);
+    for (const c of this.clouds || []) c.rotation.y = t * 0.004; // 구름이 천천히 하늘을 돈다
     this.stepFx(dt);
     this.camera.position.set(...frame.camera.pos);
     this.camera.lookAt(...frame.camera.look);
