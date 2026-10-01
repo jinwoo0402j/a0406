@@ -147,9 +147,10 @@ button.danger { background: #f6a48f; box-shadow: 0 4px 0 #d9826d; }
 #prompt { position: absolute; left: 50%; top: calc(50% + 46px); transform: translateX(-50%); background: rgba(47, 42, 61, 0.78); color: #fff; padding: 6px 14px; border-radius: 999px; font-size: 16px; opacity: 0; transition: opacity 0.15s; white-space: nowrap; }
 #prompt.show { opacity: 1; }
 /* 말풍선 알림: 실패도 빨강 대신 부드럽게 */
-#toast { position: absolute; left: 50%; bottom: 142px; transform: translateX(-50%) translateY(6px); background: #fff; color: #c46f58; padding: 10px 20px; border-radius: 22px; font-size: 17px; opacity: 0; transition: opacity 0.2s, transform 0.2s; white-space: nowrap; border: 3px solid #f6d9cf; box-shadow: var(--shadow); }
+#toast { position: absolute; left: 50%; bottom: 172px; transform: translateX(-50%) translateY(6px); background: #fff; color: #c46f58; padding: 10px 20px; border-radius: 22px; font-size: 17px; opacity: 0; transition: opacity 0.2s, transform 0.2s; white-space: nowrap; border: 3px solid #f6d9cf; box-shadow: var(--shadow); }
 #toast::after { content: ''; position: absolute; left: 50%; bottom: -11px; width: 16px; height: 16px; margin-left: -8px; background: #fff; border-right: 3px solid #f6d9cf; border-bottom: 3px solid #f6d9cf; transform: rotate(45deg); }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast { display: flex; align-items: center; gap: 6px; }
 #toast.info { color: var(--ink); border-color: var(--panel-border); }
 #toast.info::after { border-color: var(--panel-border); }
 #keys { position: absolute; right: 16px; bottom: 16px; font-size: 13px; color: var(--ink); background: rgba(255, 251, 234, 0.75); padding: 6px 12px; border-radius: 999px; }
@@ -196,3 +197,59 @@ button.danger { background: #f6a48f; box-shadow: 0 4px 0 #d9826d; }
   #keys { display: none; }
   #spell { min-width: 0; }
 }
+
+/* ---------------- 기호(아이콘)·키 모양 ---------------- */
+.ic { width: 1.15em; height: 1.15em; vertical-align: -0.2em; flex: none; }
+kbd.kc { display: inline-grid; place-items: center; min-width: 1.6em; height: 1.6em; padding: 0 0.35em; box-sizing: border-box; font: inherit; font-size: 0.8em; color: var(--ink); background: #fff; border: 2px solid var(--line); border-bottom-width: 4px; border-radius: 8px; line-height: 1; }
+.pc { display: inline-grid; place-items: center; width: 1.6em; height: 1.6em; border-radius: 50%; background: var(--c); color: #fff; font-size: 0.85em; box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.15); text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2); }
+.pc.dim { filter: grayscale(0.6) opacity(0.55); }
+.who { gap: 8px; }
+.mode-chips { display: inline-flex; gap: 3px; background: var(--cream-2); padding: 3px; border-radius: 999px; }
+.mode-chips span { display: inline-grid; place-items: center; width: 30px; height: 26px; border-radius: 999px; color: var(--muted); }
+.mode-chips span.on { background: var(--teal); color: #fff; box-shadow: 0 2px 0 var(--teal-dark); }
+.view-chip { margin-left: auto; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
+.word .ic { margin-right: 4px; }
+.preview-note { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.goal-row { display: flex; align-items: center; gap: 8px; justify-content: center; }
+.goal-flag { color: #ff9f6e; font-size: 20px; display: inline-flex; }
+.goal-items span.gi { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--cream-2); color: var(--muted); font-size: 15px; padding: 0; }
+.goal-items span.gi.in { background: var(--ok); color: #fff; }
+#guide { display: flex; align-items: center; gap: 8px; }
+#guide .dots { display: inline-flex; gap: 3px; margin-right: 2px; }
+#guide .dots i { width: 8px; height: 8px; border-radius: 50%; background: rgba(107, 86, 60, 0.25); }
+#guide .dots i.on { background: var(--ink); }
+#log li { display: flex; align-items: center; gap: 5px; }
+#log li .ic { color: var(--muted); }
+/* PEAK처럼 아래 가운데 상태 막대: 재사용 대기 + 상태 기호 */
+#status { position: absolute; left: 50%; bottom: 128px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; }
+#status .cooldown { width: 220px; margin: 0; height: 10px; background: rgba(255, 251, 234, 0.85); box-shadow: 0 2px 0 rgba(150, 120, 70, 0.15); }
+#badges { position: static; display: flex; gap: 6px; }
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; font-size: 14px; }
+#keys { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; max-width: 60vw; }
+#keys span { display: inline-flex; align-items: center; gap: 3px; color: var(--ink); }
+#keys .ic { color: var(--muted); }
+#lock-hint { display: inline-flex; align-items: center; gap: 8px; }
+#clear-icons { display: flex; gap: 8px; justify-content: center; align-items: center; font-size: 22px; color: #ffb347; }
+.mc-title .ic { margin-right: 4px; }
+.mc-label { display: inline-flex; align-items: center; gap: 4px; }
+.mc-help { display: flex; flex-wrap: wrap; gap: 6px 14px; justify-content: center; }
+.mc-help span { display: inline-flex; align-items: center; gap: 4px; }
+/* 단어 표·이름(로그·알림·가방 결과 칸) */
+.wt { display: inline-flex; align-items: center; gap: 2px; padding: 1px 8px 1px 5px; border-radius: 999px; color: #fff; font-size: 0.92em; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.12); text-shadow: 0 1px 0 rgba(0, 0, 0, 0.12); }
+.wt.effect { background: var(--action); }
+.wt.mod { background: var(--target); }
+.wt + .wt { margin-left: 2px; }
+.nm { padding: 0 7px; border-radius: 999px; background: var(--cream-2); font-size: 0.92em; }
+#who-chip { display: inline-flex; align-items: center; gap: 4px; }
+#toast .pc, #log .pc, .preview-note .pc { font-size: 0.9em; }
+.mc-result { gap: 3px; }
+/* 핫바·가방 단어 동그라미: 그림 위, 이름 아래 */
+.mc-item { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; }
+.mc-item .ic { width: 17px; height: 17px; }
+.mc-item .lb { font-size: 11px; line-height: 1.05; }
+.rs { display: inline-flex; align-items: center; gap: 4px; }
+/* 도착 목록: 사람은 자기 색 동그라미(아직이면 흐리게, 도착하면 초록 테두리) */
+.goal-items span.gi.pl { background: transparent; }
+.goal-items span.gi .pc { background: var(--c); color: #fff; padding: 0; border-radius: 50%; }
+.goal-items span.gi.pl:not(.in) .pc { filter: grayscale(0.6) opacity(0.5); }
+.goal-items span.gi.pl.in { box-shadow: 0 0 0 3px var(--ok); }

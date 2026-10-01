@@ -49,6 +49,7 @@
           <tr><td>(걷기)</td><td>바닥의 단어 위로 걸어가면 자동으로 주워요</td></tr>
           <tr><td>E / Tab</td><td>가방: 수식 개수 고르기 · 내려놓기 · 판 요약 · 재시작</td></tr>
           <tr><td>R</td><td>친구가 나에게 건 들림·밀림에서 벗어나기 + 2초 보호</td></tr>
+          <tr><td>V</td><td>1인칭(손만 보임) ↔ 3인칭</td></tr>
           <tr><td>C</td><td>(혼자 해보기) A·B 조작 전환</td></tr>
           <tr><td>H</td><td>'처음 해보기' 안내 숨기기·보이기</td></tr>
           <tr><td>M</td><td>소리 끄기·켜기</td></tr>
@@ -68,35 +69,35 @@
   <section id="hud" hidden>
     <div id="crosshair"></div>
 
+    <!-- 왼쪽 위: 나 · 대상 모드 · 지금 주문 · 미리보기(기호 위주) -->
     <div id="spell" class="panel">
-      <div class="who"><span id="who-chip" class="chip"></span><span id="who-name"></span></div>
-      <div class="mode-line">대상 모드 <span id="mode-chip" class="mode-chip">조준 대상</span><span class="key">F</span></div>
+      <div class="who"><span id="who-chip"></span><span id="mode-chips" class="mode-chips"></span><kbd class="kc">F</kbd><span id="view-chip" class="view-chip"></span></div>
       <div id="spell-line" class="sentence"></div>
-      <div class="cooldown"><div id="cooldown-bar"></div></div>
       <div id="preview-note" class="preview-note"></div>
     </div>
 
+    <!-- 가운데 위: 도착 목표 -->
     <div id="goal" class="panel">
-      <div class="goal-title">도착 구역</div>
-      <div id="goal-items" class="goal-items"></div>
+      <div class="goal-row"><span id="goal-flag" class="goal-flag"></span><div id="goal-items" class="goal-items"></div></div>
       <div class="goal-bar"><div id="goal-fill"></div></div>
     </div>
     <div id="guide" hidden></div>
 
     <ul id="log"></ul>
 
-    <div id="badges"></div>
+    <!-- 아래 가운데(PEAK처럼): 상태 막대(재사용 대기 + 상태 기호) 위에 핫바 -->
+    <div id="status"><div class="cooldown"><div id="cooldown-bar"></div></div><div id="badges"></div></div>
     <div id="hotbar"></div>
     <div id="prompt"></div>
     <div id="toast"></div>
 
-    <div id="keys">WASD 이동 · Space 점프 · 좌클릭 시전 · 우클릭 시전 종료 · F 대상 모드 · 1~9 단어 고르기 · Q 던지기 · E 가방 · R 해제 · M 소리</div>
+    <div id="keys"></div>
 
-    <div id="lock-hint">화면을 클릭하면 조작을 시작해요</div>
+    <div id="lock-hint"></div>
 
     <div id="clear-banner" hidden>
-      <div class="big">짜잔! 도착 성공!</div>
-      <div class="small">짐과 모두가 함께 도착했어요. 정말 잘했어요! · E 가방 → 판 요약 · 처음부터 다시</div>
+      <div class="big">짜잔!</div>
+      <div id="clear-icons" class="small"></div>
       <pre id="clear-summary"></pre>
     </div>
   </section>
@@ -104,26 +105,32 @@
   <!-- 가방(마인크래프트식 인벤토리) -->
   <section id="editor" hidden>
     <div id="mc-panel" class="mc-panel">
-      <div class="mc-title">주문 <span class="mc-sub">손에 든 효과 + 수식 칸 = 지금 쓰는 마법</span></div>
+      <div class="mc-title"><i data-ic="wand"></i>주문</div>
       <div class="mc-spell">
-        <div class="mc-col"><div id="mc-hand-label" class="mc-label">손 (효과)</div><div id="mc-hand" class="mc-slot hand" data-area="hand"></div></div>
-        <div class="mc-op">+</div>
-        <div class="mc-col"><div class="mc-label">수식 칸</div><div id="mc-mods" class="mc-row"></div></div>
-        <div class="mc-op">→</div>
-        <div class="mc-col grow"><div class="mc-label">결과</div><div id="mc-result" class="mc-result"></div></div>
+        <div class="mc-col"><div id="mc-hand-label" class="mc-label"><i data-ic="hand"></i></div><div id="mc-hand" class="mc-slot hand" data-area="hand"></div></div>
+        <div class="mc-op"><i data-ic="plus"></i></div>
+        <div class="mc-col"><div class="mc-label"><i data-ic="big"></i><i data-ic="strong"></i></div><div id="mc-mods" class="mc-row"></div></div>
+        <div class="mc-op"><i data-ic="arrow"></i></div>
+        <div class="mc-col grow"><div class="mc-label"><i data-ic="star"></i></div><div id="mc-result" class="mc-result"></div></div>
       </div>
-      <div class="mc-title">가방</div>
+      <div class="mc-title"><i data-ic="bag"></i>가방</div>
       <div id="mc-main" class="mc-grid"></div>
       <div id="mc-hot" class="mc-grid mc-hotrow"></div>
-      <div class="mc-help">좌클릭 집기·놓기·바꾸기 · 우클릭 반 집기 / 하나 놓기 · Shift+클릭 빠른 이동(수식은 수식 칸으로) · 칸 위에서 1~9 핫바와 바꾸기 · Q 하나 던지기(Ctrl+Q 전부) · 창 밖 클릭 던지기</div>
+      <div class="mc-help">
+        <span><i data-ic="mouseL"></i>집기·놓기</span>
+        <span><i data-ic="mouseR"></i><i data-ic="half"></i></span>
+        <span><kbd class="kc">Shift</kbd>+<i data-ic="mouseL"></i><i data-ic="swap"></i></span>
+        <span><kbd class="kc">1~9</kbd><i data-ic="swap"></i></span>
+        <span><kbd class="kc">Q</kbd><i data-ic="throw"></i></span>
+      </div>
       <details id="summary-box" class="summary-box">
-        <summary>판 요약 (플레이테스트용)</summary>
+        <summary><i data-ic="clock"></i> 판 요약</summary>
         <pre id="summary-text"></pre>
-        <button type="button" id="summary-copy" class="ghost">복사</button>
+        <button type="button" id="summary-copy" class="ghost"><i data-ic="copy"></i></button>
       </details>
       <div class="editor-actions">
-        <button type="button" id="restart-btn" class="danger">처음부터 다시 (모두)</button>
-        <button type="button" id="close-editor">닫기 (E)</button>
+        <button type="button" id="restart-btn" class="danger" title="처음부터 다시 (모두)"><i data-ic="restart"></i> <i data-ic="people"></i></button>
+        <button type="button" id="close-editor" title="닫기"><kbd class="kc">E</kbd> <i data-ic="close"></i></button>
       </div>
     </div>
     <div id="mc-cursor" class="mc-cursor"></div>

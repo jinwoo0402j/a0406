@@ -1,24 +1,25 @@
 // 클라이언트: 로비 → 접속 → 입력 전송 → 스냅숏 보간 → 렌더링·HUD.
 // 게스트/호스트 모두 요청만 보내고, 결과는 호스트의 스냅숏과 이벤트로 반영한다.
 import { Renderer } from './render.js';
-import { cameraRig, CAM } from './camera.js';
+import { rigFor, CAM } from './camera.js';
 import { FONT_STACK } from './labels.js';
 import { LEVEL, SEAT_IDS, bodyDefs } from '../shared/level.js';
 import { TUNING, modFactor } from '../shared/tuning.js';
-import { WORDS, KIND, MOD_IDS, MODE_ORDER, MODE_LABEL, spellLabel } from '../shared/words.js';
+import { WORDS, KIND, MOD_IDS, MODE_ORDER, MODE_LABEL } from '../shared/words.js';
 import { resolveTargets, modeUnsupported, REASON, liftShare } from '../shared/targeting.js';
 import { segmentBlocked } from '../shared/geom.js';
 import { HostSession } from './host.js';
 import { Sfx } from './sfx.js';
 import { Inventory, HOTBAR, MAIN, WORD_DESC } from './inventory.js';
 import { hostRoom, joinRoom, CODE_RE } from './p2p.js';
+import { icon, key, chip, EFFECT_ICON, MODE_ICON } from './icons.js';
 
 const $ = (id) => document.getElementById(id);
 const NAMES = { ...Object.fromEntries(SEAT_IDS.map((id) => [id, id])), rock: '돌', box1: '상자', box2: '무거운 상자', dummy: '허수아비', cargo: '짐' };
 const BODY_DEF = new Map(bodyDefs().map((d) => [d.id, d]));
 const SEAT_COLOR = Object.fromEntries(LEVEL.seats.map((s) => [s.id, s.color]));
 const SENS = 0.0025;
-const END_CAST_KEY = '우클릭'; // 시전 종료 키 [임시] — 키 배정은 추후 결정
+const END_CAST_IC = icon('mouseR'); // 시전 종료 키(우클릭) [임시] — 키 배정은 추후 결정
 
 const S = {
   conn: null, // 호스트 연결: WebSocket 래퍼, P2P 연결, 또는 이 탭의 HostSession
@@ -44,6 +45,7 @@ const S = {
   closingOnPurpose: false,
   editorKey: '',
   mode: 'AIM', // 대상 모드(F로 전환): 조준 대상 → 본인 → 주변
+  view: new URLSearchParams(location.search).get('view') === 'third' ? 'third' : 'first', // 1인칭(손만 보임, 기본) ↔ 3인칭(V)
   holding: false, // 내가 유지 중인 지속형 마법(<들기>)이 있음 — 시전 종료로 끝낸다
   did: { cast: false, mode: false, pickup: false, attach: false, share: false }, // '처음 해보기' 안내 진행
   stats: null, // 판 요약(플레이테스트 관찰용)
@@ -193,11 +195,41 @@ function send(msg) {
   S.conn?.send(msg);
 }
 
+// 화면의 글자는 기호로: 사람은 색 동그라미, 조작은 키 모양 + 그림
+const pc = (id, cls = '') => chip(id, SEAT_COLOR[id], cls);
+const OBJ_ICON = { cargo: 'gift' };
+// 사람·물건 표시(사람은 자리 색 동그라미, 짐은 선물 상자, 나머지는 짧은 이름)
+function P(id) {
+  if (SEAT_COLOR[id]) return pc(id);
+  if (OBJ_ICON[id]) return icon(OBJ_ICON[id]);
+  return `<span class="nm">${NAMES[id] || id}</span>`;
+}
+// 단어 표(그림 + 이름). 단어는 게임의 내용이라 글자로 둔다.
+function W(word, n = 1) {
+  const w = WORDS[word];
+  if (!w) return '';
+  return `<span class="wt ${w.kind === KIND.EFFECT ? 'effect' : 'mod'}">${icon(EFFECT_ICON[word])}${w.label}${n > 1 ? `×${n}` : ''}</span>`;
+}
+// 주문 = 수식 단어들 + 효과 단어
+function spellHTML(effect, mods = {}) {
+  return [...MOD_IDS.filter((id) => mods[id] > 0).map((id) => W(id, mods[id])), W(effect)].join('');
+}
+
 function updateWho() {
-  $('who-chip').style.background = SEAT_COLOR[S.me];
   const other = S.me === 'A' ? 'B' : 'A';
-  $('who-name').textContent = S.solo ? `플레이어 ${S.me} 조작 중 · C로 ${other} 전환` : `플레이어 ${S.me} (나)`;
-  $('keys').textContent = `WASD 이동 · Space 점프 · 좌클릭 시전 · ${END_CAST_KEY} 시전 종료 · F 대상 모드 · 1~9 단어 고르기 · Q 던지기 · E 가방 · R 해제 · M 소리${S.solo ? ' · C 캐릭터 전환' : ''}`;
+  $('who-chip').innerHTML = S.solo ? `${pc(S.me)}${key('C')}${icon('swap')}${pc(other, 'dim')}` : pc(S.me);
+  const k = (k1, ic) => `<span>${k1}${icon(ic)}</span>`;
+  $('keys').innerHTML = [
+    k(key('WASD'), 'walk'), k(key('Space'), 'jump'), k(icon('mouseL'), 'wand'), k(END_CAST_IC, 'stop'),
+    k(key('F'), 'aim'), k(key('1~9'), 'hand'), k(key('Q'), 'throw'), k(key('E'), 'bag'), k(key('R'), 'release'),
+    k(key('V'), 'eye'), k(key('M'), 'sound'), S.solo ? k(key('C'), 'swap') : '',
+  ].join('');
+}
+
+// 시점: 1인칭(손만 보임) ↔ 3인칭
+function toggleView() {
+  S.view = S.view === 'first' ? 'third' : 'first';
+  toast(`${icon('eye')} ${S.view === 'first' ? '1' : '3'}인칭`, 'info');
 }
 
 function switchCharacter() {
@@ -211,7 +243,7 @@ function switchCharacter() {
   S.pitch = v.pitch;
   S.lastWish = '';
   updateWho();
-  log(`이제 플레이어 ${next}를 조작해요`);
+  log(`${icon('swap')}${pc(next)}`);
 }
 
 // 로비의 자리 표시(A~F)
@@ -294,9 +326,7 @@ function startPlaying() {
   $('log').innerHTML = '';
   S.views = {};
   updateWho();
-  log(S.solo
-    ? '혼자 해보기: Q로 A와 B를 번갈아 조작해요. 같은 주문을 친구·돌·상자에 써 보세요.'
-    : '게임이 시작됐어요! 같은 주문을 친구·돌·상자에 써 보세요.');
+  log(S.solo ? `${icon('star')} ${key('C')}${pc('A')}${icon('swap')}${pc('B')}` : `${icon('star')} ${icon('people')}`);
 }
 
 // ------------------------------------------------------------------ 스냅숏 보간
@@ -373,9 +403,9 @@ function interpolated() {
 }
 
 // ------------------------------------------------------------------ 이벤트·HUD 문구
-function log(text) {
+function log(html) {
   const li = document.createElement('li');
-  li.textContent = text;
+  li.innerHTML = html;
   $('log').prepend(li);
   setTimeout(() => li.classList.add('old'), 6000);
   setTimeout(() => li.remove(), 6800);
@@ -399,17 +429,37 @@ function confetti() {
 }
 
 // 말풍선 알림. 실패도 겁주지 않게 '앗!'으로 부드럽게 시작한다(동물의 숲 말투).
-function toast(text, kind = 'bad') {
-  $('toast').textContent = kind === 'bad' && !/^앗/.test(text) ? `앗! ${text}` : text;
+// html: 기호(SVG) + 짧은 글
+function toast(html, kind = 'bad') {
+  $('toast').innerHTML = kind === 'bad' && !/^앗/.test(html) ? `앗! ${html}` : html;
   $('toast').className = `show ${kind}`;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { $('toast').className = kind; }, 1600);
 }
 
-const who = (id) => (id === S.me ? '나' : `플레이어 ${id}`);
-const whoSubj = (id) => (id === S.me ? '내가' : `플레이어 ${id}가`);
-const wlabel = (w) => `<${WORDS[w].label}>`;
-const nameOf = (id) => (id === S.me ? '나' : NAMES[id] || id);
+// 실패 이유 → 기호 + 짧은 말. 모르는 이유는 글 그대로.
+const REASON_HTML = {
+  [REASON.NO_EFFECT]: () => `${icon('hand')}${icon('no')} ${key('1~9')}`,
+  [REASON.COOLDOWN]: () => `${icon('clock')}`,
+  [REASON.NO_TARGET]: () => `${icon('aim')}${icon('no')}`,
+  [REASON.OUT_OF_RANGE]: () => `${icon('aim')}${icon('far')}`,
+  [REASON.NOTHING_NEARBY]: () => `${icon('near')}${icon('no')}`,
+  [REASON.TERRAIN]: () => `${icon('wall')}${icon('no')}`,
+  [REASON.NOT_MOVABLE]: () => `${icon('wall')}${icon('no')}`,
+  [REASON.NOT_LIFTABLE]: () => `${icon('lift')}${icon('no')}`,
+  [REASON.TOO_HEAVY]: () => `${icon('weight')} ${icon('arrow')} ${W('STRONG')} / ${icon('people')}`,
+  [REASON.ALREADY_HELD]: () => `${icon('lift')}${icon('ok')}`,
+  [REASON.HOLDING_YOU]: () => `${icon('lift')}${icon('swap')}${icon('no')}`,
+  [REASON.HEAVY_GRAB]: () => `${icon('weight')} ${icon('arrow')} ${icon('people')} / ${W('STRONG')}`,
+  [REASON.STANDING_ON]: () => `${icon('walk')}${icon('no')}`,
+  [REASON.PROTECTED]: () => `${icon('shield')} 보호 중`,
+  [REASON.BAD_AIM]: () => `${icon('aim')}${icon('no')}`,
+  [REASON.NOT_PLAYING]: () => `${icon('stop')}`,
+  [REASON.SUSTAINING]: () => `${icon('lift')} ${icon('arrow')} ${END_CAST_IC}${icon('stop')}`,
+};
+const REASON_KEY = Object.fromEntries(Object.entries(REASON).map(([k, v]) => [v, k]));
+const reasonHTML = (r) => (REASON_HTML[r] ? `<span class="rs" data-r="${REASON_KEY[r]}">${REASON_HTML[r]()}</span>` : r || '');
+const modeHTML = (ew, mode) => `${W(ew)} ${icon(MODE_ICON[mode])}${icon('no')} ${key('F')}`;
 
 const sfx = new Sfx();
 
@@ -470,15 +520,15 @@ function recordStats(e) {
   switch (e.k) {
     case 'cast': {
       const st = statOf(e.by);
-      const key = `${WORDS[e.effect].label}${e.mode !== 'AIM' ? `(${MODE_LABEL[e.mode]})` : ''}`;
-      st.casts[key] = (st.casts[key] || 0) + 1;
+      const name = `${WORDS[e.effect].label}${e.mode !== 'AIM' ? `(${MODE_LABEL[e.mode]})` : ''}`;
+      st.casts[name] = (st.casts[name] || 0) + 1;
       countTargets(st, e.by, e.targets);
       break;
     }
     case 'liftStart': {
       const st = statOf(e.by);
-      const key = `들기${e.mode && e.mode !== 'AIM' ? `(${MODE_LABEL[e.mode]})` : ''}`;
-      st.casts[key] = (st.casts[key] || 0) + 1;
+      const name = `들기${e.mode && e.mode !== 'AIM' ? `(${MODE_LABEL[e.mode]})` : ''}`;
+      st.casts[name] = (st.casts[name] || 0) + 1;
       countTargets(st, e.by, e.targets || [e.target]);
       T.colift += (e.joined || []).length;
       break;
@@ -530,104 +580,99 @@ function onEvent(e) {
       const pos = new Map();
       for (const [id, v] of S.frame?.bodies || []) pos.set(id, v.p);
       renderer.castFx(e, pos);
-      const spell = spellLabel(e.effect, e.mods);
-      if (e.effect === 'FIREBALL') {
-        const what = { AIM: '발사!', SELF: '발밑 폭발!', NEAR: '사방으로 발사!' }[e.mode] || '발사!';
-        log(`${who(e.by)}: ${spell} ${what}`);
-      } else if (e.effect === 'PULL' && e.anchor) {
-        log(`${who(e.by)}: ${spell} → 지형 쪽으로 끌려감`);
-      } else {
-        log(`${who(e.by)}: ${spell} (${MODE_LABEL[e.mode]}) → ${e.targets.map(nameOf).join(', ')}`);
-      }
+      const spell = spellHTML(e.effect, e.mods);
+      const to = icon('arrow');
+      if (e.effect === 'FIREBALL') log(`${P(e.by)}${spell}${icon(MODE_ICON[e.mode] || 'aim')}${e.mode === 'NEAR' ? '×4' : ''}`);
+      else if (e.effect === 'PULL' && e.anchor) log(`${P(e.by)}${spell}${icon('wall')}${icon('pull')}${P(e.by)}`);
+      else log(`${P(e.by)}${spell}${icon(MODE_ICON[e.mode])}${to}${e.targets.map(P).join('')}`);
       break;
     }
     case 'liftStart': {
       renderer.poke(e.by, 'cast');
       const ids = e.targets || [e.target];
       const joined = new Set(e.joined || []);
-      log(`${who(e.by)}: ${spellLabel('LIFT', e.mods)} → ${ids.map((id) => (joined.has(id) ? `${nameOf(id)}(같이 들기)` : nameOf(id))).join(', ')}`);
-      if (e.by === S.me && e.heavy?.length) toast(REASON.HEAVY_GRAB, 'info');
+      log(`${P(e.by)}${spellHTML('LIFT', e.mods)}${icon('arrow')}${ids.map((id) => P(id) + (joined.has(id) ? icon('people') : '')).join('')}`);
+      if (e.by === S.me && e.heavy?.length) toast(reasonHTML(REASON.HEAVY_GRAB), 'info');
       break;
     }
     case 'liftEnd':
       if (e.by === S.me) S.holding = false;
-      if (e.reason === 'word') log(`${whoSubj(e.by)} <들기> 단어가 없어져 ${nameOf(e.target)}을(를) 놓쳤어요`);
-
-      if (e.reason === 'far') log(`${nameOf(e.target)}이(가) 너무 멀어져 놓쳤어요`);
-      if (e.reason === 'released-by-target') log(`${nameOf(e.target)}이(가) R로 풀려났어요`);
+      if (e.reason === 'word') log(`${P(e.by)}${W('LIFT')}${icon('no')}${icon('arrow')}${P(e.target)}${icon('down')}`);
+      if (e.reason === 'far') log(`${P(e.target)}${icon('far')}${icon('down')}`);
+      if (e.reason === 'released-by-target') log(`${P(e.target)}${key('R')}${icon('release')}`);
       break;
     case 'boom': {
       renderer.boomFx(e);
       const parts = e.hits.map((h) => {
-        if (h.effects.includes('damage')) return `${nameOf(h.id)} 피해 ${Math.round(e.damage)}`;
-        if (h.effects.includes('debuff')) return `${nameOf(h.id)} 그을림(잠시 느려짐)`;
+        if (h.effects.includes('damage')) return `${P(h.id)}-${Math.round(e.damage)}`;
+        if (h.effects.includes('debuff')) return `${P(h.id)}${icon('slow')}`;
         return null;
       }).filter(Boolean);
-      if (parts.length) log(`파이어볼 명중: ${parts.join(', ')}`);
+      if (parts.length) log(`${icon('boom')}${parts.join(' ')}`);
       break;
     }
     case 'fizzle':
       renderer.fizzleFx(e.pos);
       break;
     case 'dummyDown':
-      log('허수아비가 쓰러졌어요 (잠시 뒤 다시 일어나요)');
+      log(`${P('dummy')}${icon('down')}`);
       break;
     case 'dummyUp':
-      log('허수아비가 다시 일어났어요');
+      log(`${P('dummy')}${icon('up')}`);
       break;
     case 'castFail':
-      if (e.reason === REASON.SUSTAINING) { toast(`${e.reason} (${END_CAST_KEY})`); break; }
-      if (e.by === S.me) S.holding = false; // 들기 시전이 거절되면 유지 상태도 푼다
-      toast(e.reason);
+      if (e.by === S.me && e.reason !== REASON.SUSTAINING) S.holding = false; // 들기 시전이 거절되면 유지 상태도 푼다
+      toast(reasonHTML(e.reason));
       break;
     case 'pickup': {
       const pb = S.frame?.bodies.get(e.by);
       if (pb) renderer.pickupFx([pb.p[0], pb.p[1] + 0.6, pb.p[2]]);
+      if (e.by === S.me) renderer.handPoke('grab');
       if (e.from) {
-        log(`${whoSubj(e.by)} ${who(e.from)}의 ${wlabel(e.word)}을(를) 받았어요`);
-        if (e.by === S.me) toast(`${who(e.from)}에게서 ${wlabel(e.word)}을(를) 받았어요${e.equipped ? ' (바로 장착)' : ''}`, 'info');
+        log(`${P(e.from)}${icon('throw')}${W(e.word)}${icon('arrow')}${P(e.by)}`);
+        if (e.by === S.me) toast(`${P(e.from)}${icon('arrow')}${W(e.word)}${icon('ok')}${e.equipped ? icon('hand') : ''}`, 'info');
       } else {
-        log(`${whoSubj(e.by)} ${wlabel(e.word)} 단어를 주웠어요${e.equipped ? ' (바로 손에 듦)' : ''}`);
-        if (e.by === S.me) toast(`새 단어를 찾았어요! ${wlabel(e.word)}${WORDS[e.word].kind === KIND.MOD ? ' · E 가방에서 수식 칸에 넣어 봐요' : ''}`, 'info');
+        log(`${P(e.by)}${icon('plus')}${W(e.word)}`);
+        if (e.by === S.me) toast(`${icon('star')}${W(e.word)}${WORDS[e.word].kind === KIND.MOD ? ` ${key('E')}${icon('bag')}${icon('arrow')}${icon('big')}${icon('strong')}` : ''}`, 'info');
       }
       break;
     }
     case 'throw':
-      log(`${whoSubj(e.by)} ${wlabel(e.word)}을(를) 던졌어요`);
+      log(`${P(e.by)}${icon('throw')}${W(e.word)}`);
       break;
     case 'pickupFail':
-      toast(e.reason);
+      toast(`${icon('leaf')}${icon('no')}`);
       break;
     case 'drop':
-      log(`${whoSubj(e.by)} ${wlabel(e.word)} 단어를 내려놓았어요`);
+      log(`${P(e.by)}${icon('down')}${W(e.word)}`);
       break;
     case 'release': {
-      log(`${whoSubj(e.by)} 이동 효과를 풀었어요 (보호 ${TUNING.releaseImmunity}초)`);
+      log(`${P(e.by)}${key('R')}${icon('release')}${icon('shield')}${TUNING.releaseImmunity}s`);
       const b = S.frame?.bodies.get(e.by);
       if (b) renderer.releaseFx(b.p);
       break;
     }
     case 'recover':
-      if (NAMES[e.id]) log(`${e.id === S.me ? '내' : NAMES[e.id]}${e.id === S.me ? '가' : e.id === 'cargo' ? '이' : '이(가)'} 떨어져서 안전한 곳으로 돌아왔어요`);
+      if (NAMES[e.id]) log(`${P(e.id)}${icon('down')}${icon('restart')}`);
       break;
     case 'tokenRecover':
-      log(`${wlabel(e.word)} 단어가 안전한 곳으로 돌아왔어요`);
+      log(`${W(e.word)}${icon('restart')}`);
       break;
     case 'clear':
-      log('도착 성공! 짐과 모두가 함께 도착했어요');
+      log(`${icon('flag')}${icon('star')}${icon('star')}${icon('star')}`);
       confetti();
       break;
     case 'join':
-      if (e.id !== S.me) log(`플레이어 ${e.id}가 들어왔어요`);
+      if (e.id !== S.me) log(`${P(e.id)}${icon('in')}`);
       break;
     case 'leave':
-      log(`플레이어 ${e.id}가 나갔어요${e.dropped?.length ? ' (가진 단어는 그 자리에 떨어졌어요)' : ''}`);
+      log(`${P(e.id)}${icon('out')}${e.dropped?.length ? `${icon('down')}${icon('leaf')}` : ''}`);
       break;
     case 'restart':
       S.snaps = [];
       S.offset = null;
       $('log').innerHTML = '';
-      log(`${whoSubj(e.by)} 처음부터 다시 시작했어요`);
+      log(`${P(e.by)}${icon('restart')}`);
       break;
   }
 }
@@ -660,7 +705,7 @@ function sendInput(jump = false) {
 function currentRig() {
   const me = S.frame?.bodies.get(S.me);
   if (!me) return null;
-  return cameraRig(me.p, S.yaw, S.pitch);
+  return rigFor(S.view, me.p, S.yaw, S.pitch);
 }
 
 function myEffect() {
@@ -675,8 +720,9 @@ function sustaining() {
 function cast() {
   const rig = currentRig();
   if (!rig) return;
-  if (sustaining()) { toast(`${REASON.SUSTAINING} (${END_CAST_KEY})`, 'info'); return; }
+  if (sustaining()) { toast(reasonHTML(REASON.SUSTAINING), 'info'); return; }
   if (myEffect() === 'LIFT') S.holding = true; // 버튼을 떼도 유지, 시전 종료로 놓는다
+  renderer.handPoke(myEffect() === 'LIFT' ? 'lift' : 'cast');
   send({
     t: 'cast',
     mode: S.mode,
@@ -697,7 +743,7 @@ function endCast() {
 function cycleMode() {
   S.mode = MODE_ORDER[(MODE_ORDER.indexOf(S.mode) + 1) % MODE_ORDER.length];
   S.did.mode = true;
-  toast(`대상 모드: ${MODE_LABEL[S.mode]}`, 'info');
+  toast(`${icon(MODE_ICON[S.mode])} ${MODE_LABEL[S.mode]}`, 'info');
 }
 
 function requestLock() {
@@ -747,7 +793,8 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyC' && S.solo) { endCast(); switchCharacter(); }
   if (e.code === 'KeyF') cycleMode();
   if (e.code === 'KeyH') S.guideOff = !S.guideOff;
-  if (e.code === 'KeyM') toast(sfx.toggle() ? '소리 끔 (M)' : '소리 켬 (M)', 'info');
+  if (e.code === 'KeyV') toggleView();
+  if (e.code === 'KeyM') toast(`${icon('sound')}${sfx.toggle() ? icon('no') : icon('ok')}`, 'info');
 });
 window.addEventListener('keyup', (e) => S.keys.delete(e.code));
 window.addEventListener('blur', () => S.keys.clear());
@@ -786,29 +833,35 @@ $('summary-box').addEventListener('toggle', () => { if ($('summary-box').open) $
 $('summary-copy').onclick = async () => {
   const text = summaryText();
   $('summary-text').textContent = text;
-  try { await navigator.clipboard.writeText(text); $('summary-copy').textContent = '복사했어요'; } catch { $('summary-copy').textContent = '복사 안 됨 · 직접 선택해 복사하세요'; }
-  setTimeout(() => { $('summary-copy').textContent = '복사'; }, 1500);
+  try { await navigator.clipboard.writeText(text); $('summary-copy').innerHTML = icon('ok'); } catch { $('summary-copy').innerHTML = `${icon('no')} Ctrl+C`; }
+  setTimeout(() => { $('summary-copy').innerHTML = icon('copy'); }, 1500);
 };
 $('close-editor').onclick = () => toggleEditor(false);
 // 확인 창(confirm)이 막힌 환경도 있어 페이지 안에서 두 번 눌러 확인한다.
 let restartArmed = null;
 $('restart-btn').onclick = () => {
   const btn = $('restart-btn');
+  const idle = `${icon('restart')} ${icon('people')}`;
   if (!restartArmed) {
-    btn.textContent = '한 번 더 누르면 처음부터 다시 시작해요';
+    btn.innerHTML = `${icon('restart')} 한 번 더!`;
     restartArmed = setTimeout(() => {
       restartArmed = null;
-      btn.textContent = '처음부터 다시 (모두)';
+      btn.innerHTML = idle;
     }, 3000);
     return;
   }
   clearTimeout(restartArmed);
   restartArmed = null;
-  btn.textContent = '처음부터 다시 (모두)';
+  btn.innerHTML = idle;
   send({ t: 'restart' });
   toggleEditor(false);
 };
 buildSeats();
+// 화면 곳곳의 기호 자리(<i data-ic="…">)를 그림으로 채운다
+for (const el of document.querySelectorAll('[data-ic]')) el.outerHTML = icon(el.dataset.ic);
+$('lock-hint').innerHTML = `${icon('mouseL')} 클릭!`;
+$('goal-flag').innerHTML = icon('flag');
+$('clear-icons').innerHTML = `${icon('gift')}${icon('people')}${icon('flag')}${icon('star')}`;
 $('join-btn').onclick = () => connect();
 $('solo-btn').onclick = () => startSolo();
 $('create-btn').onclick = () => createRoom();
@@ -961,14 +1014,15 @@ function throwIds(ids) {
 
 function throwFromSlot(i, all) {
   const ids = inv().takeForThrow(i, all, nowSec());
-  if (!ids.length) { toast('던질 단어가 없어요 · 1~9로 칸을 골라요', 'info'); return; }
+  if (!ids.length) { toast(`${icon('throw')}${icon('no')} ${key('1~9')}`, 'info'); return; }
+  renderer.handPoke('throw');
   throwIds(ids);
 }
 
 function itemHTML(word, count = 1) {
   if (!word) return '';
   const w = WORDS[word];
-  return `<div class="mc-item ${w.kind === KIND.EFFECT ? 'effect' : 'mod'}">${w.label}${count > 1 ? `<span class="mc-count">${count}</span>` : ''}</div>`;
+  return `<div class="mc-item ${w.kind === KIND.EFFECT ? 'effect' : 'mod'}">${icon(EFFECT_ICON[word])}<span class="lb">${w.label}</span>${count > 1 ? `<span class="mc-count">${count}</span>` : ''}</div>`;
 }
 
 function slotHTML(area, idx, s, extra = '') {
@@ -994,13 +1048,13 @@ function renderBag() {
   const ps = mySnap();
   if (!ps) return;
   const I = inv();
-  const key = JSON.stringify([I.slots, I.mods, I.sel, I.cursor, S.hover, ps.mc, ps.e]);
-  if (key === S.bagKey) return;
-  S.bagKey = key;
+  const sig = JSON.stringify([I.slots, I.mods, I.sel, I.cursor, S.hover, ps.mc, ps.e]);
+  if (sig === S.bagKey) return;
+  S.bagKey = sig;
   const hov = (area, i) => (S.hover && S.hover.area === area && S.hover.i === i ? ' hover' : '');
   const hand = I.slots[I.sel];
   $('mc-hand').outerHTML = `<div id="mc-hand" class="mc-slot hand${hov('hand', 0)}" data-area="hand" data-i="0"${hand ? ` data-word="${hand.word}"` : ''}>${hand && WORDS[hand.word].kind === KIND.EFFECT ? itemHTML(hand.word) : ''}</div>`;
-  $('mc-hand-label').textContent = `손 (핫바 ${I.sel + 1}번)`;
+  $('mc-hand-label').innerHTML = `${icon('hand')}${key(I.sel + 1)}`;
   let mods = '';
   for (let j = 0; j < TUNING.modSlots; j++) {
     const id = I.mods[j];
@@ -1010,7 +1064,7 @@ function renderBag() {
   const handWord = hand && WORDS[hand.word].kind === KIND.EFFECT ? hand.word : null;
   const counts = {};
   for (const id of I.mods) counts[tokenWord(id)] = (counts[tokenWord(id)] || 0) + 1;
-  $('mc-result').textContent = handWord ? spellLabel(handWord, counts) : '손에 효과 단어가 없어요 (핫바 칸을 골라요)';
+  $('mc-result').innerHTML = handWord ? spellHTML(handWord, counts) : `${icon('hand')}${icon('no')}`;
   let main = '';
   for (let i = HOTBAR; i < HOTBAR + MAIN; i++) main += slotHTML('inv', i, I.slots[i], hov('inv', i));
   $('mc-main').innerHTML = main;
@@ -1044,7 +1098,7 @@ $('editor').addEventListener('mousedown', (e) => {
   if (hit.area === 'inv') r = I.clickSlot(hit.i, e.button, e.shiftKey, now);
   else if (hit.area === 'mod') r = I.clickMod(hit.i, e.button, e.shiftKey, now);
   else if (hit.area === 'hand') r = I.clickHand(e.button, e.shiftKey, now);
-  if (r === 'reject') toast(hit.area === 'mod' ? '수식 칸에는 수식 단어만 들어가요' : '손에는 효과 단어만 들 수 있어요', 'info');
+  if (r === 'reject') toast(hit.area === 'mod' ? `${icon('no')} ${icon('big')}${icon('strong')} 수식만` : `${icon('no')} ${icon('hand')} 효과만`, 'info');
   S.bagKey = '';
 });
 $('editor').addEventListener('mousemove', (e) => {
@@ -1078,26 +1132,27 @@ function bagKey(e) {
     if (h.area === 'mod') throwIds(I.takeModForThrow(h.i, nowSec()));
     S.bagKey = '';
   }
-  if (e.code === 'KeyM') toast(sfx.toggle() ? '소리 끔 (M)' : '소리 켬 (M)', 'info');
+  if (e.code === 'KeyM') toast(`${icon('sound')}${sfx.toggle() ? icon('no') : icon('ok')}`, 'info');
 }
 
-// '처음 해보기' 안내: 기획서의 기본 흐름(단어 발견 → 주문 구성 → 시험·교환 → 함께 도착)으로 이끈다
-function guideText(ps) {
-  if (S.latest?.g?.c) return '';
+// '처음 해보기' 안내: 기획서의 기본 흐름(단어 발견 → 주문 구성 → 시험·교환 → 함께 도착)으로 이끈다.
+// 글 대신 그림 순서로 보여 준다. 반환: { step(1~5, 0=목표), html }
+function guideStep(ps) {
+  if (S.latest?.g?.c) return null;
   const I = inv();
   const ew = ps.e && tokenWord(ps.e);
-  const step = (n, text) => `처음 해보기 ${n}/5 · ${text}`;
+  const to = icon('arrow');
   if (!ew) {
     const hasEffect = I.slots.some((x) => x && WORDS[x.word].kind === KIND.EFFECT);
-    return step(1, hasEffect ? '1~9로 효과 단어 칸을 골라 손에 들어요' : '바닥의 단어 위로 걸어가면 주워져요');
+    return { step: 1, html: hasEffect ? `${key('1~9')}${to}${icon('hand')}` : `${icon('walk')}${to}${icon('leaf')}` };
   }
-  if (!S.did.cast) return step(1, `좌클릭으로 <${WORDS[ew].label}>을(를) 친구나 물건에 써 봐요`);
-  if (!S.did.mode) return step(2, 'F로 대상 모드를 바꿔 같은 주문을 다르게 써 봐요 (본인·주변)');
-  if (!S.did.pickup) return step(3, '둘러보며 새 단어를 찾아 걸어가 주워요');
+  if (!S.did.cast) return { step: 1, html: `${icon('mouseL')}${W(ew)}${to}${icon('people')} / ${icon('gift')}` };
+  if (!S.did.mode) return { step: 2, html: `${key('F')}${icon('aim')}${to}${icon('self')}${to}${icon('near')}` };
+  if (!S.did.pickup) return { step: 3, html: `${icon('eye')}${icon('leaf')}${to}${icon('walk')}` };
   const looseMod = I.slots.some((x) => x && WORDS[x.word].kind === KIND.MOD);
-  if (!S.did.attach && looseMod) return step(4, 'E 가방에서 수식 단어를 위쪽 수식 칸에 넣어 봐요 (Shift+클릭)');
-  if (!S.did.share) return step(5, '1~9로 단어를 고르고 Q로 친구에게 던져 줘 봐요');
-  return '목표: 짐(★)과 모두가 단차 위 도착 구역에 2초 함께 있기';
+  if (!S.did.attach && looseMod) return { step: 4, html: `${key('E')}${icon('bag')}${to}${key('Shift')}+${icon('mouseL')}${to}${icon('big')}${icon('strong')}` };
+  if (!S.did.share) return { step: 5, html: `${key('1~9')}${key('Q')}${icon('throw')}${to}${icon('people')}` };
+  return { step: 0, html: `${icon('gift')}+${icon('people')}${to}${icon('flag')} ${icon('clock')}${TUNING.goalHoldTime}s` };
 }
 
 function updateHud(frame) {
@@ -1105,19 +1160,24 @@ function updateHud(frame) {
   if (!ps) return;
   syncInventory(ps);
   if (S.editorOpen) renderBag();
-  const guide = S.guideOff ? '' : guideText(ps);
-  if ($('guide').dataset.text !== guide) {
-    $('guide').dataset.text = guide;
-    $('guide').innerHTML = guide ? `${guide} <span class="key">H</span>` : '';
-    $('guide').hidden = !guide;
+  const gs = S.guideOff ? null : guideStep(ps);
+  const ghtml = gs ? `${gs.step ? `<span class="dots">${[1, 2, 3, 4, 5].map((n) => `<i class="${n <= gs.step ? 'on' : ''}"></i>`).join('')}</span>` : ''}${gs.html}${key('H')}` : '';
+  if ($('guide').dataset.html !== ghtml) {
+    $('guide').dataset.html = ghtml;
+    $('guide').dataset.step = gs ? gs.step : '';
+    $('guide').innerHTML = ghtml;
+    $('guide').hidden = !gs;
   }
-  // 대상 모드와 현재 주문(효과 + 수식 중첩)
-  $('mode-chip').textContent = MODE_LABEL[S.mode];
+  // 대상 모드(기호 3개 중 지금 것)와 시점, 현재 주문(효과 + 수식 중첩)
+  const modes = MODE_ORDER.map((m) => `<span class="${m === S.mode ? 'on' : ''}" data-mode="${m}" title="${MODE_LABEL[m]}">${icon(MODE_ICON[m])}</span>`).join('');
+  if ($('mode-chips').dataset.html !== modes) { $('mode-chips').dataset.html = modes; $('mode-chips').innerHTML = modes; }
+  const viewHtml = `${icon('eye')}${S.view === 'first' ? 1 : 3}${key('V')}`;
+  if ($('view-chip').dataset.html !== viewHtml) { $('view-chip').dataset.html = viewHtml; $('view-chip').innerHTML = viewHtml; }
   const ew = ps.e && tokenWord(ps.e);
   const chips = MOD_IDS.filter((id) => ps.mc?.[id] > 0)
-    .map((id) => `<span class="word mod">${WORDS[id].label}${ps.mc[id] > 1 ? ` × ${ps.mc[id]}` : ''}</span>`);
-  chips.push(ew ? `<span class="word action">${WORDS[ew].label}</span>` : '<span class="word action empty">[효과]</span>');
-  const html = chips.join('<span class="plus-sm">+</span>');
+    .map((id) => `<span class="word mod">${icon(EFFECT_ICON[id])}${WORDS[id].label}${ps.mc[id] > 1 ? ` ×${ps.mc[id]}` : ''}</span>`);
+  chips.push(ew ? `<span class="word action">${icon(EFFECT_ICON[ew])}${WORDS[ew].label}</span>` : `<span class="word action empty">${icon('hand')}?</span>`);
+  const html = chips.join(`<span class="plus-sm">${icon('plus')}</span>`);
   if ($('spell-line').dataset.html !== html) {
     $('spell-line').innerHTML = html;
     $('spell-line').dataset.html = html;
@@ -1126,65 +1186,72 @@ function updateHud(frame) {
   const cdLeft = Math.max(0, ps.cd - (performance.now() / 1000 - S.latestAt));
   $('cooldown-bar').style.width = `${(1 - cdLeft / TUNING.castCooldown) * 100}%`;
 
+  // 미리보기: 기호 + 사람 동그라미 위주로 짧게. 상태 이름은 data-k로(테스트·스타일용)
   const pv = frame.preview;
   const note = $('preview-note');
   const ch = $('crosshair');
   ch.className = '';
-  const setNote = (text, cls) => { note.textContent = text; note.className = `preview-note ${cls}`; };
-  if (S.editorOpen) setNote('가방을 여는 동안은 멈춰요 (E로 닫기)', '');
+  const setNote = (h, cls, k = '') => {
+    if (note.dataset.html !== h) { note.innerHTML = h; note.dataset.html = h; }
+    note.className = `preview-note ${cls}`;
+    note.dataset.k = k;
+  };
+  const to = icon('arrow');
+  if (S.editorOpen) setNote(`${icon('bag')}${icon('stop')} ${key('E')}`, '', 'bag');
   else if (!pv) setNote('', '');
-  else if (pv.kind === 'none' || pv.kind === 'mode') { setNote(pv.reason, 'bad'); ch.className = 'bad'; }
+  else if (pv.kind === 'none') { setNote(reasonHTML(pv.reason), 'bad', 'none'); ch.className = 'bad'; }
+  else if (pv.kind === 'mode') { setNote(modeHTML(ew, S.mode), 'bad', 'mode'); ch.className = 'bad'; }
   else if (pv.kind === 'holding') {
     const stuck = ps.hold.filter((id) => frame.bodies.get(id)?.hv);
-    if (stuck.length) setNote(`${stuck.map(nameOf).join(', ')}: 혼자서는 무거워 안 올라가요 · 친구가 같이 들면 올라가요 · ${END_CAST_KEY}으로 놓기`, 'bad');
-    else setNote(`${ps.hold.map(nameOf).join(', ')}을(를) 들고 있어요 · 시점을 돌려 옮기고, ${END_CAST_KEY}으로 놓아요`, 'ok');
+    if (stuck.length) setNote(`${icon('lift')}${stuck.map(P).join('')} ${icon('weight')}${to}${icon('people')} · ${END_CAST_IC}${icon('stop')}`, 'bad', 'heavy');
+    else setNote(`${icon('lift')}${ps.hold.map(P).join('')} · ${icon('eye')}${icon('swap')} · ${END_CAST_IC}${icon('stop')}`, 'ok', 'holding');
     ch.className = 'ok';
   }
-  else if (pv.kind === 'fire') { setNote('조준한 곳으로 날아가요 · 실제로 맞은 대상에 적용돼요', ''); ch.className = 'fire'; }
-  else if (pv.kind === 'firering') { setNote('내 둘레 사방으로 4발 · 각각 실제로 맞은 대상에 적용돼요', ''); ch.className = 'fire'; }
-  else if (pv.kind === 'blast') { setNote('발밑 폭발 · 나는 피해 없이 튀어 오르고(땅에서만), 둘레는 폭발을 맞아요', ''); ch.className = 'fire'; }
+  else if (pv.kind === 'fire') { setNote(`${icon('fire')}${to}${icon('aim')}`, '', 'fire'); ch.className = 'fire'; }
+  else if (pv.kind === 'firering') { setNote(`${icon('fire')}×4 ${icon('near')}`, '', 'firering'); ch.className = 'fire'; }
+  else if (pv.kind === 'blast') { setNote(`${icon('fire')}${icon('self')}${to}${icon('up')} · ${icon('near')}${icon('boom')}`, '', 'blast'); ch.className = 'fire'; }
   else if (pv.effect === 'PULL' && S.mode === 'AIM' && pv.res.selection.selected[0]?.type === 'static' && !pv.res.reason) {
-    setNote('지형을 당기면 내가 그쪽으로 끌려가요', 'ok');
+    setNote(`${icon('wall')}${icon('pull')}${P(S.me)}`, 'ok', 'anchor');
     ch.className = 'ok';
   }
   else if (pv.ok.size) {
     const ids = [...pv.ok];
     const label = (id) => {
       const v = frame.bodies.get(id);
-      if (pv.heavy.has(id)) return `${nameOf(id)}(혼자서는 무거움 · 같이 들기)`;
-      if (v?.h?.length) return `${nameOf(id)}(같이 들기)`;
-      return nameOf(id);
+      if (pv.heavy.has(id)) return `${P(id)}${icon('weight')}${icon('people')}`;
+      if (v?.h?.length) return `${P(id)}${icon('people')}`;
+      return P(id);
     };
-    const head = pv.kind === 'lift' ? '들 수 있어요' : pv.effect === 'PULL' ? '끌어와요' : '적용 대상';
-    setNote(`${head}: ${ids.map(label).join(', ')}`, pv.heavy.size && ids.every((id) => pv.heavy.has(id)) ? 'bad' : 'ok');
+    const allHeavy = pv.heavy.size && ids.every((id) => pv.heavy.has(id));
+    setNote(`${icon(EFFECT_ICON[pv.effect])}${to}${ids.map(label).join('')}`, allHeavy ? 'bad' : 'ok', allHeavy ? 'heavy' : 'ok');
     if (S.mode === 'AIM') ch.className = 'ok';
   } else {
-    setNote(pv.res.reason, 'bad');
+    setNote(reasonHTML(pv.res.reason), 'bad', 'reason');
     if (S.mode === 'AIM') ch.className = pv.res.selection.selected[0]?.type === 'static' ? 'blocked' : 'bad';
   }
 
-  // 상태 표시
+  // 상태 표시(PEAK처럼 아래 가운데 막대 옆에 기호로)
   const me = frame.bodies.get(S.me);
   const badges = [];
-  if (me?.h?.length) badges.push(`<span class="badge float">${me.h.map(nameOf).join('·')}에게 들려 있어요 · R로 풀기</span>`);
-  if (me?.d > 0) badges.push(`<span class="badge ext">그을림 · 느려짐 ${me.d.toFixed(1)}초</span>`);
-  if (me?.i > 0) badges.push(`<span class="badge shield">보호 중 ${me.i.toFixed(1)}초</span>`);
+  if (me?.h?.length) badges.push(`<span class="badge float">${icon('lift')}${me.h.map(P).join('')}${key('R')}</span>`);
+  if (me?.d > 0) badges.push(`<span class="badge ext">${icon('slow')}${me.d.toFixed(1)}</span>`);
+  if (me?.i > 0) badges.push(`<span class="badge shield">${icon('shield')}${me.i.toFixed(1)}</span>`);
   for (const id of SEAT_IDS) {
     const ob = id !== S.me && frame.bodies.get(id);
-    if (ob?.i > 0) badges.push(`<span class="badge shield">${id} 보호 중</span>`);
+    if (ob?.i > 0) badges.push(`<span class="badge shield">${icon('shield')}${P(id)}</span>`);
   }
-  $('badges').innerHTML = badges.join('');
+  const bh = badges.join('');
+  if ($('badges').dataset.html !== bh) { $('badges').dataset.html = bh; $('badges').innerHTML = bh; }
 
   updateHotbar();
 
-  // 도착 구역
+  // 도착 구역: 짐(선물 상자) + 접속한 모든 사람
   const g = S.latest.g;
   const keys = Object.keys(g.in);
   const items = $('goal-items');
   if (items.dataset.keys !== keys.join()) {
-    // 접속한 사람이 바뀌면 목록을 다시 만든다(짐 + 접속한 모든 사람)
     items.dataset.keys = keys.join();
-    items.innerHTML = keys.map((k) => `<span data-k="${k}">${k === 'cargo' ? '짐' : k}</span>`).join('');
+    items.innerHTML = keys.map((k) => (k === 'cargo' ? `<span class="gi" data-k="${k}">${icon('gift')}</span>` : `<span class="gi pl" data-k="${k}">${pc(k)}</span>`)).join('');
   }
   for (const el of items.children) el.classList.toggle('in', !!g.in[el.dataset.k]);
   $('goal-fill').style.width = `${Math.min(1, g.t / TUNING.goalHoldTime) * 100}%`;
@@ -1205,6 +1272,19 @@ function nearestPickable(bodies) {
     if (dh <= TUNING.pickupRadius && Math.abs(t.p[1] - bottom) <= 2.5 && (!best || dh < best.dh)) best = { id: t.id, dh };
   }
   return best?.id || null;
+}
+
+// 1인칭 손에 보여 줄 것: 손에 든 효과 단어, 들기 유지(무거워 버둥거림), 걷기
+function handState(bodies, me) {
+  const ps = mySnap();
+  const hold = ps?.hold || [];
+  return {
+    word: ps?.e ? tokenWord(ps.e) : null,
+    holding: hold.length > 0,
+    strained: hold.some((id) => bodies.get(id)?.hv),
+    speed: me.speed,
+    grounded: me.g,
+  };
 }
 
 let lastT = performance.now();
@@ -1235,7 +1315,7 @@ function frame() {
   const bodies = interpolated();
   const me = bodies.get(S.me);
   if (!me) return;
-  const rig = cameraRig(me.p, S.yaw, S.pitch);
+  const rig = rigFor(S.view, me.p, S.yaw, S.pitch);
   const preview = S.editorOpen ? null : buildPreview(bodies, rig);
   const f = {
     bodies,
@@ -1247,6 +1327,8 @@ function frame() {
     pickable: nearestPickable(bodies),
     camera: { pos: rig.pos, look: rig.look },
     cleared: S.latest.g.c,
+    first: S.view === 'first',
+    hand: handState(bodies, me),
   };
   S.frame = f;
   renderer.render(f, dt, t);
@@ -1278,7 +1360,12 @@ window.__wm = {
   get phase() { return S.phase; },
   get latest() { return S.latest; },
   get preview() { return S.frame?.preview; },
-  get view() { return { yaw: S.yaw, pitch: S.pitch }; },
+  get view() { return { yaw: S.yaw, pitch: S.pitch, mode: S.view }; },
+  setCamera(v) { S.view = v === 'third' ? 'third' : 'first'; },
+  reasonHTML,
+  REASON,
+  get guideStep() { return $('guide').hidden ? null : Number($('guide').dataset.step); },
+  get previewKind() { return $('preview-note').dataset.k; },
   get recent() { return S.recent; },
   send,
   cast,
@@ -1288,7 +1375,7 @@ window.__wm = {
       const me = S.frame?.bodies.get(S.me);
       const tg = S.frame?.bodies.get(id);
       if (!me || !tg) return false;
-      const rig = cameraRig(me.p, S.yaw, S.pitch);
+      const rig = rigFor(S.view, me.p, S.yaw, S.pitch);
       const d = [tg.p[0] - rig.pos[0], tg.p[1] - rig.pos[1], tg.p[2] - rig.pos[2]];
       const l = Math.hypot(...d);
       S.yaw = Math.atan2(d[0], d[2]);

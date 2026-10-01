@@ -57,9 +57,19 @@ try {
   await B.waitForFunction(() => window.__wm.phase === 'playing' && window.__wm.latest);
   await sleep(800);
   check('두 클라이언트가 접속해 게임 시작', true);
-  const guide0 = await A.evaluate(() => document.getElementById('guide').textContent);
-  check("'처음 해보기' 안내가 첫 할 일을 보여 줌", /처음 해보기 1\/5/.test(guide0) && /좌클릭/.test(guide0), guide0);
+  // 안내는 글 대신 그림 순서(단계 점 + 좌클릭 그림 + 손에 든 단어)
+  const guide0 = await A.evaluate(() => ({ step: window.__wm.guideStep, word: !!document.querySelector('#guide .wt'), text: document.getElementById('guide').textContent }));
+  check("'처음 해보기' 안내가 첫 할 일을 보여 줌(그림)", guide0.step === 1 && guide0.word, JSON.stringify(guide0));
   await A.screenshot({ path: `${OUT}/01-A-start.png` });
+  // 시점: 기본 1인칭(손만 보임), V로 3인칭
+  const cam0 = await A.evaluate(() => window.__wm.view.mode);
+  await A.keyboard.press('KeyV');
+  await sleep(150);
+  const cam1 = await A.evaluate(() => window.__wm.view.mode);
+  await A.screenshot({ path: `${OUT}/01-A-third.png` });
+  await A.keyboard.press('KeyV');
+  await sleep(150);
+  check('기본은 1인칭(손만), V로 3인칭 전환', cam0 === 'first' && cam1 === 'third', `${cam0}→${cam1}`);
   await B.screenshot({ path: `${OUT}/01-B-start.png` });
 
   const bodyOf = (page, id) => page.evaluate((i) => window.__wm.latest.b.find((x) => x.id === i), id);
@@ -77,8 +87,8 @@ try {
   const b1a = await bodyOf(A, 'B');
   const moved = Math.hypot(b1.p[0] - b0.p[0], b1.p[2] - b0.p[2]);
   check('<밀치기>로 B가 밀림', moved > 0.8, `${moved.toFixed(2)}m`);
-  const guide1 = await A.evaluate(() => document.getElementById('guide').textContent);
-  check('써 보고 나면 안내가 다음 단계(F 모드)로', /2\/5/.test(guide1) && /F/.test(guide1), guide1);
+  const guide1 = await A.evaluate(() => ({ step: window.__wm.guideStep, text: document.getElementById('guide').textContent }));
+  check('써 보고 나면 안내가 다음 단계(F 모드)로', guide1.step === 2 && /F/.test(guide1.text), JSON.stringify(guide1));
   check('두 화면이 같은 B 위치를 봄', Math.hypot(b1.p[0] - b1a.p[0], b1.p[2] - b1a.p[2]) < 0.6);
 
   // 2) B가 <들기>로 돌을 든다: 시전 종료 전까지 유지, 시점을 올리면 따라 올라간다
@@ -109,8 +119,8 @@ try {
   check(`좌클릭을 뗀 뒤에도 B가 든 돌이 A 화면에서 들려 있음${locked ? '' : ' (마우스 잠금 없음: 함수로 시전)'}`, rockA.h?.includes('B') && rockA.p[1] > 1.2, `h=${rockA.h} y=${rockA.p[1]}`);
   await B.screenshot({ path: `${OUT}/03-B-lift-rock.png` });
   await A.screenshot({ path: `${OUT}/03-A-sees-rock.png` });
-  const blocked = await B.evaluate(() => { window.__wm.cast(); return document.getElementById('toast').textContent; });
-  check('들고 있는 중 재시전은 시전 종료 안내', /시전 종료/.test(blocked), blocked);
+  const blocked = await B.evaluate(() => { window.__wm.cast(); return !!document.querySelector('#toast [data-r="SUSTAINING"]'); });
+  check('들고 있는 중 재시전은 시전 종료 안내(우클릭 그림)', blocked);
   if (locked) await B.mouse.click(vp.width / 2, vp.height / 2, { button: 'right' });
   else await B.evaluate(() => window.__wm.endCast());
   await sleep(1300);
@@ -211,13 +221,13 @@ try {
   for (let i = 0; i < 20 && g.modCounts('A').BIG !== 3; i++) await sleep(100);
   await sleep(150);
   const r3 = await A.evaluate(() => document.getElementById('mc-result').textContent);
-  check('[브라우저] Shift+클릭으로 <큰>×3이 수식 칸에, 결과에 주문 표시', /큰> × 3 \+ <파이어볼>/.test(r3) && g.modCounts('A').BIG === 3, `${r3} / 서버 ${g.modCounts('A').BIG}`);
+  check('[브라우저] Shift+클릭으로 <큰>×3이 수식 칸에, 결과에 주문 표시', /큰×3.*파이어볼/.test(r3) && g.modCounts('A').BIG === 3, `${r3} / 서버 ${g.modCounts('A').BIG}`);
   await A.screenshot({ path: `${OUT}/18-A-bag.png` });
   await A.locator('#mc-mods .mc-slot[data-word="BIG"]').first().click({ modifiers: ['Shift'] });
   for (let i = 0; i < 20 && g.modCounts('A').BIG !== 2; i++) await sleep(100);
   await sleep(150);
   const r2 = await A.evaluate(() => document.getElementById('mc-result').textContent);
-  check('[브라우저] 수식 칸을 Shift+클릭하면 가방으로(×2)', /큰> × 2 \+/.test(r2) && g.modCounts('A').BIG === 2, `${r2} / 서버 ${g.modCounts('A').BIG}`);
+  check('[브라우저] 수식 칸을 Shift+클릭하면 가방으로(×2)', /큰×2/.test(r2) && g.modCounts('A').BIG === 2, `${r2} / 서버 ${g.modCounts('A').BIG}`);
   // 좌클릭으로 집어서 빈 수식 칸에 놓기(한 칸에 하나)
   await A.locator('.mc-grid .mc-slot[data-word="BIG"]').first().click();
   await A.locator('#mc-mods .mc-slot:not([data-word])').first().click();
@@ -227,7 +237,7 @@ try {
   await A.locator('#mc-hot .mc-slot[data-word="PUSH"]').click();
   await A.locator('#mc-mods .mc-slot:not([data-word])').first().click();
   const rejectToast = await A.evaluate(() => document.getElementById('toast').textContent);
-  check('[브라우저] 수식 칸에 효과 단어를 넣으면 거절 안내', /수식 단어만/.test(rejectToast), rejectToast);
+  check('[브라우저] 수식 칸에 효과 단어를 넣으면 거절 안내', /수식만/.test(rejectToast), rejectToast);
   await A.keyboard.press('KeyE'); // 닫으면 들고 있던 단어는 가방으로 돌아간다
   await sleep(300);
   check('[브라우저] 가방을 닫으면 커서에 든 단어는 가방으로', await A.evaluate(() => !window.__wm.bag.cursor && window.__wm.bag.slots.some((x) => x?.word === 'PUSH')));
@@ -257,8 +267,8 @@ try {
   await sleep(900);
   const solo = await bodyOf(B, 'box2');
   check('[브라우저] 혼자 붙잡은 무거운 상자는 안 올라감(B 화면)', solo.h?.includes('A') && solo.hv === 1 && solo.p[1] < 0.6, JSON.stringify(solo));
-  const soloNote = await A.evaluate(() => document.getElementById('preview-note').textContent);
-  check('혼자서는 무겁다는 안내', /혼자서는 무거워/.test(soloNote), soloNote);
+  const soloNote = await A.evaluate(() => window.__wm.previewKind);
+  check('혼자서는 무겁다는 안내(무게 그림)', soloNote === 'heavy', soloNote);
   await B.evaluate(() => { window.__wm.setMode('AIM'); window.__wm.setView(0, 0); window.__wm.aimAt('box2'); window.__wm.cast(); });
   await B.evaluate(() => window.__wm.setView(window.__wm.view.yaw, 0.5));
   await sleep(2000);
@@ -297,7 +307,7 @@ try {
   await sleep(1300);
   const bInv = await B.evaluate(() => window.__wm.latest.p.B.inv);
   const bToast = await B.evaluate(() => document.getElementById('toast').textContent);
-  check('[브라우저] Q로 던진 단어가 B에게 닿아 주워지고 안내가 뜸', bInv.includes('w8') && /받았어요/.test(bToast), `${bInv} / ${bToast}`);
+  check('[브라우저] Q로 던진 단어가 B에게 닿아 주워지고 안내가 뜸', bInv.includes('w8') && /A.*들기/.test(bToast), `${bInv} / ${bToast}`);
   await sleep(300);
 
   place('cargo', [0, 1.6, 34]);
