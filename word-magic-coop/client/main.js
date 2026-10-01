@@ -16,6 +16,18 @@ import { icon, key, chip, EFFECT_ICON, MODE_ICON } from './icons.js';
 import { SelfPredictor } from './predict.js';
 
 const $ = (id) => document.getElementById(id);
+// 화면 요소는 값이 바뀔 때만 고친다(같은 값을 매 프레임 써도 다시 그려져 느려진다)
+const domCache = new WeakMap();
+function setDom(el, key, value, apply) {
+  let c = domCache.get(el);
+  if (!c) domCache.set(el, (c = {}));
+  if (c[key] === value) return;
+  c[key] = value;
+  apply(value);
+}
+const setClass = (el, v) => setDom(el, 'class', v, (x) => { el.className = x; });
+const setWidth = (el, v) => setDom(el, 'width', v, (x) => { el.style.width = x; });
+const setHidden = (el, v) => setDom(el, 'hidden', v, (x) => { el.hidden = x; });
 const NAMES = { ...Object.fromEntries(SEAT_IDS.map((id) => [id, id])), rock: '돌', box1: '상자', box2: '무거운 상자', dummy: '허수아비', cargo: '짐' };
 const BODY_DEF = new Map(bodyDefs().map((d) => [d.id, d]));
 const SEAT_COLOR = Object.fromEntries(LEVEL.seats.map((s) => [s.id, s.color]));
@@ -804,6 +816,7 @@ window.addEventListener('keydown', (e) => {
   if (S.editorOpen) { bagKey(e); return; }
   if (e.repeat) return;
   S.keys.add(e.code);
+  moveKeyChanged(e.code);
   if (e.code === 'Space') { e.preventDefault(); sendInput(true); }
   if (e.code === 'KeyE') { toggleEditor(); return; } // 가방(마인크래프트처럼 E)
   if (/^Digit[1-9]$/.test(e.code)) inv().select(Number(e.code.slice(5)) - 1);
@@ -815,7 +828,16 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyV') toggleView();
   if (e.code === 'KeyM') toast(`${icon('sound')}${sfx.toggle() ? icon('no') : icon('ok')}`, 'info');
 });
-window.addEventListener('keyup', (e) => S.keys.delete(e.code));
+window.addEventListener('keyup', (e) => {
+  S.keys.delete(e.code);
+  moveKeyChanged(e.code);
+});
+// 이동 키가 바뀌면 다음 프레임을 기다리지 않고 바로 보낸다(예측도 그 순간부터 반영)
+function moveKeyChanged(code) {
+  if (S.phase !== 'playing' || !MOVE_KEYS.has(code)) return;
+  if (wishVector().map((v) => Math.round(v * 1000) / 1000).join(',') !== S.lastWish) sendInput(false);
+}
+const MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD']);
 window.addEventListener('blur', () => S.keys.clear());
 
 $('view').addEventListener('mousedown', (e) => {
@@ -1238,17 +1260,17 @@ function updateHud(frame) {
   }
 
   const cdLeft = Math.max(0, ps.cd - (performance.now() / 1000 - S.latestAt));
-  $('cooldown-bar').style.width = `${(1 - cdLeft / TUNING.castCooldown) * 100}%`;
+  setWidth($('cooldown-bar'), `${Math.round((1 - cdLeft / TUNING.castCooldown) * 100)}%`);
 
   // 미리보기: 기호 + 사람 동그라미 위주로 짧게. 상태 이름은 data-k로(테스트·스타일용)
   const pv = frame.preview;
   const note = $('preview-note');
-  const ch = $('crosshair');
-  ch.className = '';
+  let chCls = '';
+  const ch = { set className(v) { chCls = v; } };
   const setNote = (h, cls, k = '') => {
     if (note.dataset.html !== h) { note.innerHTML = h; note.dataset.html = h; }
-    note.className = `preview-note ${cls}`;
-    note.dataset.k = k;
+    setClass(note, `preview-note ${cls}`);
+    setDom(note, 'k', k, (x) => { note.dataset.k = x; });
   };
   const to = icon('arrow');
   if (S.editorOpen) setNote(`${icon('bag')}${icon('stop')} ${key('E')}`, '', 'bag');
@@ -1308,11 +1330,12 @@ function updateHud(frame) {
     items.innerHTML = keys.map((k) => (k === 'cargo' ? `<span class="gi" data-k="${k}">${icon('gift')}</span>` : `<span class="gi pl" data-k="${k}">${pc(k)}</span>`)).join('');
   }
   for (const el of items.children) el.classList.toggle('in', !!g.in[el.dataset.k]);
-  $('goal-fill').style.width = `${Math.min(1, g.t / TUNING.goalHoldTime) * 100}%`;
-  $('clear-banner').hidden = !g.c;
+  setWidth($('goal-fill'), `${Math.round(Math.min(1, g.t / TUNING.goalHoldTime) * 100)}%`);
+  setHidden($('clear-banner'), !g.c);
   if (g.c && !$('clear-summary').textContent) $('clear-summary').textContent = summaryText();
   if (!g.c && $('clear-summary').textContent) $('clear-summary').textContent = '';
-  $('lock-hint').hidden = S.locked || S.editorOpen;
+  setHidden($('lock-hint'), S.locked || S.editorOpen);
+  setClass($('crosshair'), chCls);
 }
 
 function nearestPickable(bodies) {
@@ -1477,7 +1500,7 @@ window.__wm = {
       vt: S.renderTime, latestTime: S.latest?.time,
     };
   },
-  hold(code, on) { if (on) S.keys.add(code); else S.keys.delete(code); },
+  hold(code, on) { if (on) S.keys.add(code); else S.keys.delete(code); moveKeyChanged(code); },
   toggleEditor,
   switchCharacter,
   get solo() { return S.solo; },
