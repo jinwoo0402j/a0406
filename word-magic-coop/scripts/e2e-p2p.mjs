@@ -102,15 +102,18 @@ try {
   await host.screenshot({ path: `${OUT}/p2p-2-host-lifted.png` });
   await guest.screenshot({ path: `${OUT}/p2p-2-guest-view.png` });
 
-  // 5) 친구가 단어를 내려놓으면 방장 화면에 보인다
-  await guest.keyboard.press('Tab');
-  await sleep(300);
+  // 5) 친구가 가방(E)에서 <들기> 위에 Q → 던진 단어가 방장 화면의 월드에 보인다
   await guest.evaluate(() => window.__wm.endCast());
-  await guest.locator('.inv-card', { hasText: '들기' }).getByRole('button', { name: '내려놓기' }).click();
+  await guest.bringToFront();
+  await guest.keyboard.press('KeyE');
+  await sleep(300);
+  await guest.locator('#mc-hot .mc-slot[data-word="LIFT"]').hover();
+  await guest.keyboard.press('KeyQ');
   await sleep(500);
-  await guest.keyboard.press('Tab');
+  await guest.keyboard.press('KeyE');
+  await host.bringToFront();
   const t2 = await host.evaluate(() => window.__wm.latest.k.find((k) => k.id === 't2'));
-  check('친구가 내려놓은 <들기>가 방장 화면의 월드에 있음', !t2.o && !!t2.p);
+  check('친구가 가방에서 던진 <들기>가 방장 화면의 월드에 있음', !t2.o && !!t2.p);
 
   // 6) 세 번째 사람은 진행 중인 판에 C로 참가 → 모두의 화면에 보이고, 나가도 게임은 계속
   const third = await openPage('세번째', link);

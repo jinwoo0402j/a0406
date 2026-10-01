@@ -64,6 +64,7 @@ export const TUNING = {
 
   // 수식 단어 중첩 [임시: 곱 연산, 중첩당 배율, 최대 중첩 수]
   maxModStacks: 5,
+  modSlots: 5, // 가방 창의 수식 칸 수(마크의 갑옷 칸처럼 한 칸에 하나) [임시]
   mods: {
     BIG: { fireballRadius: 1.35, blastRadius: 1.35, pushReach: 1.2, pullReach: 1.2, liftReach: 1.2 }, // <큰>: 크기·범위 계열
     STRONG: { pushForce: 1.3, pullForce: 1.3, liftCapacity: 1.4, fireballDamage: 1.5 }, // <세게>: 힘·위력 계열

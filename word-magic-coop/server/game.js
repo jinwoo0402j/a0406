@@ -288,6 +288,7 @@ export class Game {
       case 'throw': return this.onThrow(pid, msg);
       case 'equip': return this.onEquip(pid, msg);
       case 'mod': return this.onMod(pid, msg);
+      case 'loadout': return this.onLoadout(pid, msg);
       case 'release': return this.onRelease(pid);
       case 'restart': return this.onRestart(pid);
       default: return { ok: false };
@@ -694,17 +695,40 @@ export class Game {
     this.emit({ k: 'pickup', by: pid, token: t.id, word: t.word, equipped, from });
   }
 
-  // 단어를 갖게 한다. 효과 칸이 비어 있으면 바로 장착, 수식은 바로 붙인다(편집창에서 개수를 줄일 수 있다).
+  // 단어를 갖게 한다(마인크래프트처럼 가방으로). 손에 든 효과가 없을 때 효과 단어만 바로 손에 든다.
+  // 수식은 자동으로 붙지 않는다: 가방 창(E)에서 수식 칸에 넣어야 주문에 붙는다.
   receiveToken(pid, t) {
     t.owner = pid;
     t.acquiredAt = this.time + this.tick * 1e-9;
     const p = this.players[pid];
-    if (WORDS[t.word].kind === KIND.EFFECT) {
-      if (!this.effectWord(pid)) { p.slots.effect = t.id; return true; }
-      return false;
+    if (WORDS[t.word].kind === KIND.EFFECT && !this.effectWord(pid)) { p.slots.effect = t.id; return true; }
+    return false;
+  }
+
+  // 장착 한꺼번에 정하기(가방 창): effect = 손에 든 효과 단어(선택한 핫바 칸), mods = 수식 칸의 단어들.
+  // 모두 본인 소유여야 하고, 수식 칸은 modSlots개까지.
+  onLoadout(pid, msg) {
+    const own = (id) => {
+      const t = this.token(id);
+      return t && t.owner === pid ? t : null;
+    };
+    let effect = null;
+    if (msg.effect != null) {
+      const t = own(msg.effect);
+      if (!t || WORDS[t.word].kind !== KIND.EFFECT) return { ok: false };
+      effect = t.id;
     }
-    p.slots.mods.push(t.id);
-    return true;
+    const mods = [];
+    for (const id of Array.isArray(msg.mods) ? msg.mods : []) {
+      const t = own(id);
+      if (!t || WORDS[t.word].kind !== KIND.MOD || mods.includes(id)) return { ok: false };
+      mods.push(id);
+    }
+    if (mods.length > this.T.modSlots) return { ok: false };
+    const p = this.players[pid];
+    p.slots.effect = effect;
+    p.slots.mods = mods;
+    return { ok: true };
   }
 
   // 장착 칸에서 뺀다(던지거나 내려놓을 때)
@@ -773,8 +797,9 @@ export class Game {
     const owned = this.inventory(pid).filter((t) => t.word === msg.word).map((t) => t.id);
     const n = Math.max(0, Math.min(owned.length, Math.floor(Number(msg.count) || 0)));
     const others = p.slots.mods.filter((id) => this.token(id)?.word !== msg.word);
-    p.slots.mods = [...others, ...owned.slice(0, n)];
-    return { ok: true, count: n };
+    const m = Math.min(n, this.T.modSlots - others.length);
+    p.slots.mods = [...others, ...owned.slice(0, m)];
+    return { ok: true, count: m };
   }
 
   onRelease(pid) {

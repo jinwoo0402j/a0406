@@ -101,28 +101,21 @@
     </div>
   </section>
 
-  <!-- 주문 편집창 -->
+  <!-- 가방(마인크래프트식 인벤토리) -->
   <section id="editor" hidden>
-    <div class="card wide">
-      <h2>가방 · 주문 편집</h2>
-      <p class="sub">효과 단어 하나에 수식 단어를 가진 개수만큼 겹쳐 붙여요. 효과 카드를 누르면 장착돼요.</p>
-      <div class="slots">
-        <div class="slot-box">
-          <div class="slot-name">효과</div>
-          <div id="ed-effect" class="word action big"></div>
-          <button type="button" id="unequip-effect" class="ghost">비우기</button>
-        </div>
-        <div class="plus">+</div>
-        <div class="slot-box">
-          <div class="slot-name">수식 (가진 개수까지 겹쳐 붙이기)</div>
-          <div id="ed-mods" class="mods"></div>
-        </div>
+    <div id="mc-panel" class="mc-panel">
+      <div class="mc-title">주문 <span class="mc-sub">손에 든 효과 + 수식 칸 = 지금 쓰는 마법</span></div>
+      <div class="mc-spell">
+        <div class="mc-col"><div id="mc-hand-label" class="mc-label">손 (효과)</div><div id="mc-hand" class="mc-slot hand" data-area="hand"></div></div>
+        <div class="mc-op">+</div>
+        <div class="mc-col"><div class="mc-label">수식 칸</div><div id="mc-mods" class="mc-row"></div></div>
+        <div class="mc-op">→</div>
+        <div class="mc-col grow"><div class="mc-label">결과</div><div id="mc-result" class="mc-result"></div></div>
       </div>
-      <p class="spell-preview">현재 주문: <strong id="ed-spell"></strong></p>
-      <p class="note">대상은 단어가 아니라 <b>F</b> 키로 바꾸는 대상 모드예요 (조준 대상 → 본인 → 주변).</p>
-      <h3>내 단어</h3>
-      <div id="inventory"></div>
-      <p class="note">단어는 한 사람만 가질 수 있어요. 친구에게 주려면 가방을 닫고 <b>1~9로 고른 뒤 Q로 던지세요</b>. 바닥의 단어는 걸어가 닿으면 주워져요.</p>
+      <div class="mc-title">가방</div>
+      <div id="mc-main" class="mc-grid"></div>
+      <div id="mc-hot" class="mc-grid mc-hotrow"></div>
+      <div class="mc-help">좌클릭 집기·놓기·바꾸기 · 우클릭 반 집기 / 하나 놓기 · Shift+클릭 빠른 이동(수식은 수식 칸으로) · 칸 위에서 1~9 핫바와 바꾸기 · Q 하나 던지기(Ctrl+Q 전부) · 창 밖 클릭 던지기</div>
       <details id="summary-box" class="summary-box">
         <summary>판 요약 (플레이테스트용)</summary>
         <pre id="summary-text"></pre>
@@ -130,9 +123,11 @@
       </details>
       <div class="editor-actions">
         <button type="button" id="restart-btn" class="danger">처음부터 다시 (모두)</button>
-        <button type="button" id="close-editor">닫기 (E / Tab)</button>
+        <button type="button" id="close-editor">닫기 (E)</button>
       </div>
     </div>
+    <div id="mc-cursor" class="mc-cursor"></div>
+    <div id="mc-tip" class="mc-tip" hidden></div>
   </section>
 
   <script type="module" src="/client/main.js"></script>

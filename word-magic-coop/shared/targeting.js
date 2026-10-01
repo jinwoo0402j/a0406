@@ -10,7 +10,7 @@ import { TRAIT, WORDS, MODE_LABEL } from './words.js';
 import { boxOfBody, rayBox, dist, segmentBlocked, normalize } from './geom.js';
 
 export const REASON = {
-  NO_EFFECT: '효과 단어를 장착하세요 (Tab)',
+  NO_EFFECT: '손에 효과 단어가 없어요 (1~9로 고르기)',
   COOLDOWN: '아직 재사용 대기 중이에요',
   NO_TARGET: '조준선에 대상이 없어요',
   OUT_OF_RANGE: '너무 멀어요',
