@@ -2,7 +2,8 @@
 import * as THREE from 'three';
 import { LEVEL, bodyDefs } from '../shared/level.js';
 import { WORDS } from '../shared/words.js';
-import { makeLabel } from './labels.js';
+import { makeLabel, iconPlate } from './labels.js';
+import { EFFECT_ICON } from './icons.js';
 import {
   bendTree, toon, toonShared, grassTexture, cliffTexture, sandTexture, woodTexture, starTexture, puffTexture,
   skyDome, cloud, water, stepWater, roundTree, palmTree, bush, flowers, villager, giftBox, mergeStatic, firstHands,
@@ -150,7 +151,7 @@ export class Renderer {
     let l = this.heldLabels.get(word);
     if (!l) {
       const w = WORDS[word];
-      l = makeLabel(w.label, { bg: KIND_COLOR[w.kind], size: 44, height: 0.032, border: '#ffffff' });
+      l = iconPlate([EFFECT_ICON[word]], { bg: KIND_COLOR[w.kind], round: true, height: 0.04, border: '#ffffff' }); // 이름은 왼쪽 위 주문 칸에만
       l.material.depthTest = false;
       l.renderOrder = 2;
       this.handScene.add(l);
@@ -221,16 +222,15 @@ export class Renderer {
     if (hd.word && WORDS[hd.word]) {
       const r = H.right.position;
       const glow = 1 + 0.12 * Math.sin(t * 6);
-      this.heldOrb.visible = this.heldHalo.visible = true;
-      this.heldOrb.material.color.set(ACTION_COLOR[hd.word] || '#ffffff');
-      this.heldHalo.material.color.set(ACTION_COLOR[hd.word] || '#ffffff');
-      this.heldOrb.position.set(r.x - 0.012, r.y + 0.066 + 0.04 * L, r.z - 0.05);
-      this.heldOrb.scale.setScalar(glow);
-      this.heldHalo.position.copy(this.heldOrb.position);
-      this.heldHalo.material.rotation = t * 1.5;
+      // 손 위에 단어 기호 배지 + 뒤에서 도는 반짝이(이름 글자는 왼쪽 위 주문 칸에만)
       const lab = this.heldLabel(hd.word);
       lab.visible = true;
-      lab.position.set(r.x - 0.01, r.y + 0.09 + 0.04 * L, r.z - 0.04);
+      lab.position.set(r.x - 0.01, r.y + 0.085 + 0.04 * L, r.z - 0.045);
+      this.heldHalo.visible = true;
+      this.heldHalo.material.color.set(ACTION_COLOR[hd.word] || '#ffffff');
+      this.heldHalo.position.copy(lab.position).add(new THREE.Vector3(0, 0, -0.002));
+      this.heldHalo.scale.setScalar(0.07 * glow);
+      this.heldHalo.material.rotation = t * 1.5;
     }
     return true;
   }
@@ -308,11 +308,11 @@ export class Renderer {
     this.scene.add(flagPole, flag);
 
     for (const l of LEVEL.labels) {
-      // 나무 표지판 느낌
-      const sprite = makeLabel(l.text, { bg: '#f3dcae', fg: '#6b563c', size: 64, height: 0.7, radius: 30, border: '#c99a66' });
+      // 나무 표지판 느낌: 글 대신 기호
+      const plate = iconPlate(l.icons, { bg: '#f3dcae', fg: '#6b563c', border: '#c99a66', height: 1.1, sprite: false });
       const sign = new THREE.Mesh(
-        new THREE.PlaneGeometry(sprite.scale.x, sprite.scale.y),
-        new THREE.MeshBasicMaterial({ map: sprite.material.map, transparent: true }),
+        new THREE.PlaneGeometry(plate.width, plate.height),
+        new THREE.MeshBasicMaterial({ map: plate.texture, transparent: true }),
       );
       sign.position.set(...l.pos);
       sign.rotation.y = l.yaw || 0;
@@ -404,7 +404,7 @@ export class Renderer {
           band.position.y = y;
           visual.add(band);
         }
-        const tag = makeLabel('무거운 상자', { bg: '#7d859a', size: 36, height: 0.26, border: '#ffffff' });
+        const tag = iconPlate(['weight'], { bg: '#7d859a', round: true, height: 0.34, border: '#ffffff' }); // 무거운 상자
         tag.position.y = h / 2 + 0.35;
         group.add(tag);
       } else if (d.kind === 'dummy') {
@@ -434,7 +434,7 @@ export class Renderer {
         bar.position.y = h / 2 + 0.3;
         group.add(bar);
         group.userData.hpBar = { bar, fill };
-        const tag = makeLabel('허수아비', { bg: '#c99a5e', size: 36, height: 0.26, border: '#ffffff' });
+        const tag = iconPlate(['dummy'], { bg: '#c99a5e', round: true, height: 0.34, border: '#ffffff' }); // 허수아비(적)
         tag.position.y = h / 2 + 0.6;
         group.add(tag);
       } else {
@@ -444,7 +444,7 @@ export class Renderer {
         star.position.y = d.size[1] / 2 + 0.55;
         visual.add(star);
         group.userData.star = star;
-        const tag = makeLabel('짐', { bg: '#ff9fb4', size: 40, height: 0.3, border: '#ffffff' });
+        const tag = iconPlate(['flag'], { bg: '#ff9fb4', round: true, height: 0.36, border: '#ffffff' }); // 짐: 도착 깃발로 가져갈 것
         tag.position.y = h / 2 + 0.9;
         group.add(tag);
       }

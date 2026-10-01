@@ -80,11 +80,12 @@ export const LEVEL = {
 
   // 표시용 구역 이름(벽·단차에 붙은 표지판). yaw는 표지판 앞면이 향하는 방향(0 = +z).
   labels: [
-    { text: '출발·연습 구역', pos: [-7.94, 1.9, 5], yaw: Math.PI / 2 },
-    { text: '출발·연습 구역', pos: [7.94, 1.9, 5], yaw: -Math.PI / 2 },
-    { text: '발견·실험 구역', pos: [-7.94, 1.9, 17], yaw: Math.PI / 2 },
-    { text: '발견·실험 구역', pos: [7.94, 1.9, 17], yaw: -Math.PI / 2 },
-    { text: '도착 구역 ▲', pos: [0, 0.8, 28.97], yaw: Math.PI },
+    // 표지판은 기호로(text는 설명용)
+    { text: '출발·연습 구역', icons: ['walk', 'wand'], pos: [-7.94, 1.9, 5], yaw: Math.PI / 2 },
+    { text: '출발·연습 구역', icons: ['walk', 'wand'], pos: [7.94, 1.9, 5], yaw: -Math.PI / 2 },
+    { text: '발견·실험 구역', icons: ['eye', 'leaf'], pos: [-7.94, 1.9, 17], yaw: Math.PI / 2 },
+    { text: '발견·실험 구역', icons: ['eye', 'leaf'], pos: [7.94, 1.9, 17], yaw: -Math.PI / 2 },
+    { text: '도착 구역 ▲', icons: ['flag', 'up'], pos: [0, 0.8, 28.97], yaw: Math.PI },
   ],
 };
 

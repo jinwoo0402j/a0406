@@ -146,8 +146,8 @@ try {
   const aimInfo = await B.evaluate(() => { window.__wm.aimAt('A'); const p = window.__wm.previewNow(); window.__wm.cast(); return p; });
   await B.waitForFunction((n) => window.__wm.recent.slice(n).some((e) => (e.k === 'liftStart' || e.k === 'castFail') && e.by === 'B'), n0, { timeout: 3000 }).catch(() => {});
   const reply = await B.evaluate((n) => window.__wm.recent.slice(n).find((e) => (e.k === 'liftStart' || e.k === 'castFail') && e.by === 'B'), n0);
-  const toast = await B.evaluate(() => document.getElementById('toast').textContent);
-  check('보호 중인 A에게 시전하면 거절되고 이유를 부드럽게 표시(앗!)', reply?.k === 'castFail' && /보호/.test(reply.reason) && /^앗! .*보호/.test(toast), `${JSON.stringify(reply)} / 미리보기 ${JSON.stringify(aimInfo)}`);
+  const toast = await B.evaluate(() => !!document.querySelector('#toast.bad [data-r="PROTECTED"]'));
+  check('보호 중인 A에게 시전하면 거절되고 이유를 기호로 표시(방패)', reply?.k === 'castFail' && /보호/.test(reply.reason) && toast, `${JSON.stringify(reply)} / 미리보기 ${JSON.stringify(aimInfo)}`);
   await B.screenshot({ path: `${OUT}/05-B-sees-A-shield.png` });
   await B.evaluate(() => window.__wm.endCast());
 
@@ -258,8 +258,8 @@ try {
   // 수식 칸에 효과 단어는 안 들어간다
   await A.locator('#mc-hot .mc-slot[data-word="PUSH"]').click();
   await A.locator('#mc-mods .mc-slot:not([data-word])').first().click();
-  const rejectToast = await A.evaluate(() => document.getElementById('toast').textContent);
-  check('[브라우저] 수식 칸에 효과 단어를 넣으면 거절 안내', /수식만/.test(rejectToast), rejectToast);
+  const rejectToast = await A.evaluate(() => !!document.querySelector('#toast [data-r="MOD_ONLY"]'));
+  check('[브라우저] 수식 칸에 효과 단어를 넣으면 거절 안내(기호)', rejectToast);
   await A.keyboard.press('KeyE'); // 닫으면 들고 있던 단어는 가방으로 돌아간다
   await sleep(300);
   check('[브라우저] 가방을 닫으면 커서에 든 단어는 가방으로', await A.evaluate(() => !window.__wm.bag.cursor && window.__wm.bag.slots.some((x) => x?.word === 'PUSH')));
@@ -328,8 +328,8 @@ try {
   await A.keyboard.press('KeyQ');
   await sleep(1300);
   const bInv = await B.evaluate(() => window.__wm.latest.p.B.inv);
-  const bToast = await B.evaluate(() => document.getElementById('toast').textContent);
-  check('[브라우저] Q로 던진 단어가 B에게 닿아 주워지고 안내가 뜸', bInv.includes('w8') && /A.*들기/.test(bToast), `${bInv} / ${bToast}`);
+  const bToast = await B.evaluate(() => [...document.querySelectorAll('#toast .pc, #toast .wt')].map((x) => x.dataset.w || x.textContent).join(','));
+  check('[브라우저] Q로 던진 단어가 B에게 닿아 주워지고 안내가 뜸(A → 들기)', bInv.includes('w8') && bToast === 'A,LIFT', `${bInv} / ${bToast}`);
   await sleep(300);
 
   place('cargo', [0, 1.6, 34]);
@@ -340,8 +340,9 @@ try {
   await Promise.all([A, B].map((p) => p.waitForFunction(() => !document.getElementById('clear-banner').hidden, null, { timeout: 5000 }).catch(() => {})));
   const cleared = await Promise.all([A, B].map((p) => p.evaluate(() => !document.getElementById('clear-banner').hidden)));
   check('[시각] 도착 성공 표시가 양쪽 화면에 보임', cleared.every(Boolean), JSON.stringify(cleared));
-  const summary = await A.evaluate(() => document.getElementById('clear-summary').textContent);
-  check('도착하면 판 요약이 보임(주문 수·같이 들기·건네준 단어)', /A: 주문 \d+번/.test(summary) && /같이 들기 [1-9]/.test(summary) && /건네준 단어 1/.test(summary), summary.replace(/\n/g, ' | '));
+  const summary = await A.evaluate(() => window.__wm.summaryText());
+  const rows = await A.evaluate(() => document.querySelectorAll('#clear-stats .cs-row').length);
+  check('도착하면 판 요약이 기호·숫자로 보이고, 복사용 글 요약도 맞음', rows >= 3 && /A: 주문 \d+번/.test(summary) && /같이 들기 [1-9]/.test(summary) && /건네준 단어 1/.test(summary), `${rows}줄 | ${summary.replace(/\n/g, ' | ')}`);
   await A.screenshot({ path: `${OUT}/14-A-clear.png` });
 
   // 7) B의 연결이 끊기면 A는 안내 후 로비로

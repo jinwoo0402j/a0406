@@ -12,55 +12,33 @@
 <body>
   <canvas id="view"></canvas>
 
-  <!-- 로비 -->
+  <!-- 로비: 글은 제목·연결 오류만, 나머지는 기호 -->
   <section id="lobby" class="screen">
     <div class="card">
       <h1>단어로 만드는 마법</h1>
-      <p class="sub">친구들과 단어를 모아 마법을 만들어 함께 놀아요!</p>
       <div class="seats" aria-label="참가 자리 (최대 6명)"></div>
-      <p id="lobby-status" class="status">호스트에 접속해 2명 이상 모이면 시작해요(최대 6명).</p>
+      <p id="lobby-status" class="status"></p>
       <p id="lobby-note" class="note" hidden></p>
       <div class="lobby-actions">
-        <button id="join-btn" type="button">2인 참가하기</button>
-        <button id="create-btn" type="button" hidden>방 만들기</button>
-        <button id="solo-btn" type="button" class="secondary">혼자 해보기</button>
+        <button id="join-btn" type="button" title="참가"><i data-ic="in"></i></button>
+        <button id="create-btn" type="button" hidden title="방 만들기"><i data-ic="people"></i><i data-ic="plus"></i></button>
+        <button id="solo-btn" type="button" class="secondary" title="혼자 해보기"><i data-ic="play"></i></button>
       </div>
       <form id="join-form" class="join-form" hidden>
-        <label for="join-code">친구 방에 들어가기</label>
-        <input id="join-code" name="join-code" type="text" inputmode="latin" autocomplete="off" spellcheck="false" maxlength="6" placeholder="방 코드 6자리">
-        <button id="join-code-btn" type="submit" class="secondary">참가</button>
+        <label for="join-code" title="친구 방에 들어가기"><i data-ic="in"></i></label>
+        <input id="join-code" name="join-code" type="text" inputmode="latin" autocomplete="off" spellcheck="false" maxlength="6" placeholder="abc234" aria-label="방 코드 6자리">
+        <button id="join-code-btn" type="submit" class="secondary" title="참가"><i data-ic="arrow"></i></button>
       </form>
       <div id="room-info" class="room-info" hidden>
-        <div class="room-code">방 코드 <strong id="room-code"></strong></div>
-        <div class="room-link"><code id="room-link"></code><button id="copy-link" type="button" class="ghost">링크 복사</button></div>
-        <p class="note">친구들이 이 링크를 열면 바로 들어와요(최대 6명). 게임하는 동안 이 탭을 닫거나 다른 탭으로 오래 옮기지 마세요.</p>
+        <div class="room-code"><i data-ic="people"></i><strong id="room-code"></strong></div>
+        <div class="room-link"><code id="room-link"></code><button id="copy-link" type="button" class="ghost" title="링크 복사"><i data-ic="copy"></i></button></div>
+        <p class="note icons-line"><i data-ic="link"></i><i data-ic="arrow"></i><i data-ic="people"></i> ≤6</p>
       </div>
-      <p id="solo-note" class="note" hidden>PC의 키보드와 마우스로 플레이해요. 여럿이 각자 조작하는 네트워크 플레이는 호스트 프로그램(<code>npm start</code>)으로 할 수 있어요.</p>
       <div id="lobby-address" class="address" hidden></div>
       <details class="howto">
-        <summary>조작법</summary>
-        <table>
-          <tr><td>WASD / 마우스 / Space</td><td>이동 / 시점·조준 / 점프</td></tr>
-          <tr><td>좌클릭</td><td>현재 주문 시전 (<b>들기</b>는 시전 종료할 때까지 유지)</td></tr>
-          <tr><td>우클릭</td><td>시전 종료: 내가 유지 중인 마법을 끝냄 (들기면 놓기) · 키는 임시</td></tr>
-          <tr><td>F</td><td>대상 모드 전환: 조준 대상 → 본인 → 주변</td></tr>
-          <tr><td>1~9 / 휠</td><td>아래 칸에서 단어 고르기 (효과를 고르면 손에 들어요)</td></tr>
-          <tr><td>Q</td><td>고른 단어 던지기 · 친구 몸에 닿으면 친구가 주워요</td></tr>
-          <tr><td>(걷기)</td><td>바닥의 단어 위로 걸어가면 자동으로 주워요</td></tr>
-          <tr><td>E / Tab</td><td>가방: 수식 개수 고르기 · 내려놓기 · 판 요약 · 재시작</td></tr>
-          <tr><td>R</td><td>친구가 나에게 건 들림·밀림에서 벗어나기 + 2초 보호</td></tr>
-          <tr><td>V</td><td>1인칭(손만 보임) ↔ 3인칭</td></tr>
-          <tr><td>C</td><td>(혼자 해보기) A·B 조작 전환</td></tr>
-          <tr><td>H</td><td>'처음 해보기' 안내 숨기기·보이기</td></tr>
-          <tr><td>M</td><td>소리 끄기·켜기</td></tr>
-        </table>
-        <table class="modes">
-          <tr><th>효과</th><th>조준 대상</th><th>본인</th><th>주변</th></tr>
-          <tr><td>밀치기</td><td>밀어냄</td><td>내가 앞으로</td><td>바깥으로 퍼짐</td></tr>
-          <tr><td>당기기</td><td>내 앞까지 끌어옴 · 지형이면 내가 끌려감</td><td>—</td><td>내 쪽으로 모음</td></tr>
-          <tr><td>들기</td><td>하나 들기 · 무거우면 붙잡고 친구와 같이</td><td>—</td><td>가벼운 것부터 힘 닿는 만큼</td></tr>
-          <tr><td>파이어볼</td><td>조준점으로 발사</td><td>발밑 폭발(튀어 오름)</td><td>사방 4발</td></tr>
-        </table>
+        <summary title="조작법"><i data-ic="help"></i></summary>
+        <div id="howto-keys" class="howto-keys"></div>
+        <table id="howto-modes" class="modes"></table>
       </details>
     </div>
   </section>
@@ -96,16 +74,15 @@
     <div id="lock-hint"></div>
 
     <div id="clear-banner" hidden>
-      <div class="big">짜잔!</div>
-      <div id="clear-icons" class="small"></div>
-      <pre id="clear-summary"></pre>
+      <div id="clear-icons" class="big"></div>
+      <div id="clear-stats"></div>
     </div>
   </section>
 
   <!-- 가방(마인크래프트식 인벤토리) -->
   <section id="editor" hidden>
     <div id="mc-panel" class="mc-panel">
-      <div class="mc-title"><i data-ic="wand"></i>주문</div>
+      <div class="mc-title" title="주문"><i data-ic="wand"></i></div>
       <div class="mc-spell">
         <div class="mc-col"><div id="mc-hand-label" class="mc-label"><i data-ic="hand"></i></div><div id="mc-hand" class="mc-slot hand" data-area="hand"></div></div>
         <div class="mc-op"><i data-ic="plus"></i></div>
@@ -113,21 +90,21 @@
         <div class="mc-op"><i data-ic="arrow"></i></div>
         <div class="mc-col grow"><div class="mc-label"><i data-ic="star"></i></div><div id="mc-result" class="mc-result"></div></div>
       </div>
-      <div class="mc-title"><i data-ic="bag"></i>가방</div>
+      <div class="mc-title" title="가방"><i data-ic="bag"></i></div>
       <div id="mc-main" class="mc-grid"></div>
       <div id="mc-hot" class="mc-grid mc-hotrow"></div>
       <div class="mc-help">
-        <span><i data-ic="mouseL"></i>집기·놓기</span>
+        <span><i data-ic="mouseL"></i><i data-ic="grab"></i></span>
         <span><i data-ic="mouseR"></i><i data-ic="half"></i></span>
         <span><kbd class="kc">Shift</kbd>+<i data-ic="mouseL"></i><i data-ic="swap"></i></span>
         <span><kbd class="kc">1~9</kbd><i data-ic="swap"></i></span>
         <span><kbd class="kc">Q</kbd><i data-ic="throw"></i></span>
-        <span><i data-ic="mouseL"></i>끌기 = 나누기</span>
-        <span><i data-ic="mouseR"></i>끌기 = 하나씩</span>
-        <span><i data-ic="mouseL"></i><i data-ic="mouseL"></i>모으기</span>
+        <span title="끌어서 나누기"><i data-ic="mouseL"></i><i data-ic="split"></i></span>
+        <span title="끌어서 하나씩"><i data-ic="mouseR"></i><i data-ic="dots"></i></span>
+        <span title="두 번 클릭: 모으기"><i data-ic="mouseL"></i><i data-ic="mouseL"></i><i data-ic="gather"></i></span>
       </div>
       <details id="summary-box" class="summary-box">
-        <summary><i data-ic="clock"></i> 판 요약</summary>
+        <summary title="판 요약"><i data-ic="clock"></i></summary>
         <pre id="summary-text"></pre>
         <button type="button" id="summary-copy" class="ghost"><i data-ic="copy"></i></button>
       </details>
