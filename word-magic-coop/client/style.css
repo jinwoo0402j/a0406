@@ -58,6 +58,8 @@ button.danger { background: #ff7b7b; }
 .howto summary { cursor: pointer; }
 .howto td { padding: 3px 8px 3px 0; vertical-align: top; }
 .howto td:first-child { color: var(--ink); white-space: nowrap; }
+.howto table.modes { margin-top: 10px; border-collapse: collapse; font-size: 13px; }
+.howto table.modes th { text-align: left; color: var(--ink); padding: 3px 8px 3px 0; font-weight: 600; }
 
 /* HUD */
 #hud { position: fixed; inset: 0; pointer-events: none; }

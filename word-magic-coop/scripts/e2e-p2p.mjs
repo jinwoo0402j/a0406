@@ -98,7 +98,7 @@ try {
   await guest.evaluate(() => { window.__wm.aimAt('A'); window.__wm.cast(); });
   await sleep(900);
   const aOnHost = await bodyOf(host, 'A');
-  check('친구(B)의 <들기>가 방장 화면에서 A를 든다', aOnHost.h === 'B', `h=${aOnHost.h}`);
+  check('친구(B)의 <들기>가 방장 화면에서 A를 든다', aOnHost.h?.includes('B'), `h=${aOnHost.h}`);
   await host.screenshot({ path: `${OUT}/p2p-2-host-lifted.png` });
   await guest.screenshot({ path: `${OUT}/p2p-2-guest-view.png` });
 

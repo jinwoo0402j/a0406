@@ -102,7 +102,7 @@ try {
   await B.evaluate((y) => window.__wm.setView(y, 0.55), yaw0); // 헤드리스의 잠금 중 가짜 이동량이 시점을 돌리지 않게 복원
   await sleep(1200);
   const rockA = await bodyOf(A, 'rock');
-  check(`좌클릭을 뗀 뒤에도 B가 든 돌이 A 화면에서 들려 있음${locked ? '' : ' (마우스 잠금 없음: 함수로 시전)'}`, rockA.h === 'B' && rockA.p[1] > 1.2, `h=${rockA.h} y=${rockA.p[1]}`);
+  check(`좌클릭을 뗀 뒤에도 B가 든 돌이 A 화면에서 들려 있음${locked ? '' : ' (마우스 잠금 없음: 함수로 시전)'}`, rockA.h?.includes('B') && rockA.p[1] > 1.2, `h=${rockA.h} y=${rockA.p[1]}`);
   await B.screenshot({ path: `${OUT}/03-B-lift-rock.png` });
   await A.screenshot({ path: `${OUT}/03-A-sees-rock.png` });
   const blocked = await B.evaluate(() => { window.__wm.cast(); return document.getElementById('toast').textContent; });
@@ -119,14 +119,14 @@ try {
   await B.evaluate(() => { window.__wm.setView(window.__wm.view.yaw, -0.1); window.__wm.aimAt('A'); window.__wm.cast(); });
   await sleep(900);
   const aA = await bodyOf(A, 'A');
-  check('같은 주문으로 친구(A)도 든다', aA.h === 'B', `h=${aA.h}`);
+  check('같은 주문으로 친구(A)도 든다', aA.h?.includes('B'), `h=${aA.h}`);
   await A.screenshot({ path: `${OUT}/04-A-lifted.png` });
 
   // 4) A가 R로 풀기 → 양쪽 화면에 보호 상태, 보호 중에는 B의 마법이 거절된다
   await A.keyboard.press('KeyR');
   await sleep(300);
   const aShieldOnB = await bodyOf(B, 'A');
-  check('R로 풀면 B 화면에서도 A가 풀리고 보호 상태', aShieldOnB.i > 0 && !aShieldOnB.h, `i=${aShieldOnB.i} h=${aShieldOnB.h}`);
+  check('R로 풀면 B 화면에서도 A가 풀리고 보호 상태', aShieldOnB.i > 0 && !aShieldOnB.h?.length, `i=${aShieldOnB.i} h=${aShieldOnB.h}`);
   await sleep(1100);
   const n0 = await B.evaluate(() => window.__wm.recent.length);
   const aimInfo = await B.evaluate(() => { window.__wm.aimAt('A'); const p = window.__wm.previewNow(); window.__wm.cast(); return p; });
@@ -198,6 +198,42 @@ try {
   await sleep(900);
   await A.screenshot({ path: `${OUT}/13-A-fireball-hit.png` });
   check('[시각] <큰>×3 파이어볼이 날아가 허수아비에 명중', g.body('dummy').hp < hp0, `hp ${hp0} → ${g.body('dummy').hp}`);
+
+  // [브라우저] 같이 들기: A가 혼자 붙잡으면 안 올라가고, B가 합류하면 같이 들어 올린다(두 화면 확인)
+  g.token('w8').owner = 'A'; g.token('w8').pos = null; g.players.A.slots.effect = 'w8'; g.players.A.slots.mods = [];
+  g.token('t2').owner = 'B'; g.token('t2').pos = null; g.players.B.slots.effect = 't2';
+  place('box2', [0, 0, 18]); place('A', [-1.6, 0, 15.4]); place('B', [1.6, 0, 15.4]); place('dummy', [-5, 0, 22]);
+  await sleep(1100);
+  await A.evaluate(() => { window.__wm.setMode('AIM'); window.__wm.setView(0, 0); window.__wm.aimAt('box2'); window.__wm.cast(); });
+  await A.evaluate(() => window.__wm.setView(window.__wm.view.yaw, 0.5));
+  await sleep(900);
+  const solo = await bodyOf(B, 'box2');
+  check('[브라우저] 혼자 붙잡은 무거운 상자는 안 올라감(B 화면)', solo.h?.includes('A') && solo.hv === 1 && solo.p[1] < 0.6, JSON.stringify(solo));
+  const soloNote = await A.evaluate(() => document.getElementById('preview-note').textContent);
+  check('혼자서는 무겁다는 안내', /혼자서는 무거워/.test(soloNote), soloNote);
+  await B.evaluate(() => { window.__wm.setMode('AIM'); window.__wm.setView(0, 0); window.__wm.aimAt('box2'); window.__wm.cast(); });
+  await B.evaluate(() => window.__wm.setView(window.__wm.view.yaw, 0.5));
+  await sleep(2000);
+  const both = await bodyOf(A, 'box2');
+  check('[브라우저] B가 합류하면 같이 들어 올림(A 화면)', both.h?.length === 2 && !both.hv && both.p[1] > 1.2, JSON.stringify(both));
+  await A.screenshot({ path: `${OUT}/15-A-colift.png` });
+  await A.evaluate(() => window.__wm.endCast());
+  await B.evaluate(() => window.__wm.endCast());
+  await sleep(600);
+
+  // [시각] 주변 모드 미리보기: 들기(가벼운 것부터) / 본인 모드 파이어볼(발밑 폭발 범위)
+  place('rock', [-2.4, 0, 16]); place('box1', [-0.6, 0, 17]); place('A', [-1.5, 0, 15.6]); place('B', [4, 0, 12.8]); place('box2', [2.4, 0, 18.4]);
+  await A.evaluate(() => { window.__wm.setMode('NEAR'); window.__wm.setView(0.4, -0.3); });
+  await sleep(1300);
+  const nl = await A.evaluate(() => ({ kind: window.__wm.preview?.kind, ok: [...(window.__wm.preview?.ok || [])] }));
+  check('[시각] 주변 들기 미리보기에 돌·상자 강조', nl.kind === 'lift' && nl.ok.includes('rock') && nl.ok.includes('box1'), JSON.stringify(nl));
+  await A.evaluate(() => window.__wm.cast());
+  await sleep(1500);
+  const nearHeld = await bodyOf(B, 'rock');
+  check('[브라우저] 주변 들기로 돌·상자가 함께 떠오름(B 화면)', nearHeld.h?.includes('A') && nearHeld.p[1] > 1.2, JSON.stringify(nearHeld));
+  await A.screenshot({ path: `${OUT}/16-A-near-lift.png` });
+  await A.evaluate(() => window.__wm.endCast());
+  await sleep(1300);
 
   place('cargo', [0, 1.6, 34]);
   place('A', [-1.5, 1.6, 34]);

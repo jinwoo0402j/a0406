@@ -3,7 +3,7 @@
 //
 // world 형태:
 //   statics: [{ id, min, max }]                    — 정적 지형(속성 없음)
-//   bodies:  [{ id, kind, pos(중심), half, mass, traits, immune(bool), heldBy }]
+//   bodies:  [{ id, kind, pos(중심), half, mass, traits, immune(bool), heldBy: [드는 사람], holding: [드는 물체] }]
 
 import { TUNING } from './tuning.js';
 import { TRAIT, WORDS, MODE_LABEL } from './words.js';
@@ -18,8 +18,10 @@ export const REASON = {
   TERRAIN: '고정된 지형에는 쓸 수 없어요',
   NOT_MOVABLE: '움직일 수 없는 대상이에요',
   NOT_LIFTABLE: '들 수 없는 대상이에요',
-  TOO_HEAVY: '너무 무거워서 들 수 없어요 (<세게>로 힘을 보강하세요)',
-  ALREADY_HELD: '다른 사람이 들고 있어요',
+  TOO_HEAVY: '너무 무거워서 들 수 없어요 (<세게>를 붙이거나 친구와 같이 들어요)',
+  ALREADY_HELD: '이미 들고 있어요',
+  HOLDING_YOU: '나를 들고 있는 사람은 들 수 없어요',
+  HEAVY_GRAB: '혼자서는 무거워서 안 올라가요 · 친구가 같이 들거나 <세게>를 붙이세요',
   STANDING_ON: '딛고 서 있는 물체는 들 수 없어요',
   PROTECTED: '보호 중인 대상이에요',
   BAD_AIM: '조준 정보가 올바르지 않아요',
@@ -81,17 +83,23 @@ export function selectTargets(mode, world, casterId, aim, opts = {}, tuning = TU
 }
 
 // 효과별 적용 불가 이유. 적용 가능하면 null. opts.capacity: 들기 힘, opts.casterGround: 시전자가 딛고 선 물체
+// opts.load: 이번 시전에서 이미 나눠 들기로 한 무게(주변 들기에서 여러 개를 고를 때)
 export function applicability(effect, entity, casterId, opts = {}) {
-  if (entity.type === 'static' || !entity.body) return REASON.TERRAIN;
+  // <당기기>는 지형을 조준하면 시전자가 그쪽으로 끌려간다(조준 모드에서만 지형이 선택된다)
+  if (entity.type === 'static') return effect === 'PULL' ? null : REASON.TERRAIN;
+  if (!entity.body) return REASON.TERRAIN;
   const b = entity.body;
   // 보호 상태는 "다른 플레이어가 거는" 마법만 막는다. 자기 시전은 구분한다.
   if (b.kind === 'player' && b.id !== casterId && b.immune) return REASON.PROTECTED;
-  if (effect === 'PUSH') return b.traits?.[TRAIT.MOVABLE] ? null : REASON.NOT_MOVABLE;
+  if (effect === 'PUSH' || effect === 'PULL') return b.traits?.[TRAIT.MOVABLE] ? null : REASON.NOT_MOVABLE;
   if (effect === 'LIFT') {
     if (!b.traits?.[TRAIT.LIFTABLE]) return REASON.NOT_LIFTABLE;
-    if (b.heldBy && b.heldBy !== casterId) return REASON.ALREADY_HELD;
+    const holders = b.heldBy || [];
+    if (holders.includes(casterId)) return REASON.ALREADY_HELD;
+    if (b.holding?.includes(casterId)) return REASON.HOLDING_YOU; // 서로 들면 끝없이 올라간다
     if (opts.casterGround && opts.casterGround === b.id) return REASON.STANDING_ON;
-    if (opts.capacity !== undefined && b.mass > opts.capacity + 1e-9) return REASON.TOO_HEAVY;
+    // 같이 들기: 이미 드는 사람이 있으면 무게를 사람 수로 나눠 든다. 합류해도 다른 사람의 부담은 줄기만 한다.
+    if (opts.capacity !== undefined && liftShare(b.mass, holders.length + 1) > opts.capacity - (opts.load || 0) + 1e-9) return REASON.TOO_HEAVY;
     return null;
   }
   return null;
@@ -113,7 +121,31 @@ export function resolveTargets(mode, effect, world, casterId, aim, opts = {}, tu
   return { applicable, rejected, reason, selection: sel };
 }
 
-// 들기 최대 높이(대상 바닥 기준): 무거울수록 낮게 [임시 공식]
-export function liftMaxBottom(casterBottom, mass, capacity, tuning = TUNING) {
-  return casterBottom + tuning.liftHeightScale * Math.max(0, 1 - mass / capacity) + tuning.liftHeightBase;
+// ---------------------------------------------------------------- 들기 무게 분담 [제안안]
+// 한 물체의 무게는 드는 사람 수로 똑같이 나눈다.
+export function liftShare(mass, holderCount) {
+  return mass / Math.max(1, holderCount);
+}
+
+// 사람마다 나눠 든 무게의 합(부담). bodies: [{ mass, heldBy: [pid] }] → Map(pid → load)
+export function liftLoads(bodies) {
+  const load = new Map();
+  for (const b of bodies) {
+    const n = b.heldBy?.length || 0;
+    for (const h of b.heldBy || []) load.set(h, (load.get(h) || 0) + liftShare(b.mass, n));
+  }
+  return load;
+}
+
+// 물체가 얼마나 버거운지(0~1). 드는 사람들의 부담/힘 비율의 조화 평균.
+// 혼자 하나만 들면 무게/힘, 둘이 나눠 들면 각자의 부담이 줄어 더 높이·빠르게 든다.
+export function liftStrain(holders) {
+  let sum = 0;
+  for (const { load, capacity } of holders) sum += capacity / Math.max(1e-9, load);
+  return sum > 0 ? holders.length / sum : 1;
+}
+
+// 들기 최대 높이(대상 바닥 기준): 버거울수록 낮게 [임시 공식]. strain = 무게/힘(혼자 들 때)
+export function liftMaxBottom(casterBottom, strain, tuning = TUNING) {
+  return casterBottom + tuning.liftHeightScale * Math.max(0, 1 - strain) + tuning.liftHeightBase;
 }

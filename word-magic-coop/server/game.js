@@ -2,12 +2,13 @@
 // 자기 시전과 게스트 시전은 같은 handle() 경로로 같은 검증을 받는다. 네트워크와 분리되어 테스트에서 직접 구동한다.
 //
 // 주문 = 효과 단어 1개 + 수식 단어(보유·장착한 개수만큼 중첩). 대상은 시전 요청의 대상 모드(AIM/SELF/NEAR).
-// 효과마다 시전 방식이 다르다: 밀치기(즉시·한 번) / 들기(시전 종료까지 지속 제어) / 파이어볼(투사체, 실제 명중 시 적용).
+// 효과마다 시전 방식이 다르다: 밀치기·당기기(즉시·한 번) / 들기(시전 종료까지 지속 제어) / 파이어볼(투사체, 실제 명중 시 적용).
+// 들기는 여러 명이 한 물체를 같이 들 수 있고(무게를 나눠 든다), 주변 모드로 여러 물체를 한꺼번에 들 수 있다.
 
 import { LEVEL, SEAT_IDS } from '../shared/level.js';
 import { TUNING, modFactor } from '../shared/tuning.js';
 import { WORDS, KIND, TRAIT, MOD_IDS, MODE_ORDER } from '../shared/words.js';
-import { resolveTargets, REASON, modeUnsupported, liftMaxBottom } from '../shared/targeting.js';
+import { resolveTargets, REASON, modeUnsupported, liftMaxBottom, liftLoads, liftShare, liftStrain } from '../shared/targeting.js';
 import { boxOfBody, overlaps, pointInBox, dist, normalize, segmentBlocked, rayBox } from '../shared/geom.js';
 import { Physics, bottomOf, clampExt } from './physics.js';
 
@@ -103,7 +104,7 @@ export class Game {
     const b = this.body(pid);
     if (!b) return false;
     this.endHold(pid, 'left');
-    if (b.heldBy) this.endHold(b.heldBy, 'left');
+    for (const h of [...b.heldBy]) this.releaseItem(h, pid, 'left');
     const inv = this.inventory(pid);
     inv.forEach((t, i) => {
       const a = (i / Math.max(1, inv.length)) * Math.PI * 2;
@@ -166,7 +167,8 @@ export class Game {
       extCap: null,
       vy: 0,
       hold: null, // 들기 제어 목표(물리가 사용)
-      heldBy: null, // 들고 있는 플레이어
+      heldBy: [], // 들고 있는 플레이어들(같이 들기)
+      strained: false, // 붙잡혔지만 힘이 모자라 뜨지 못함
       grounded: false,
       groundId: null,
       groundStatic: null,
@@ -246,9 +248,25 @@ export class Game {
         mass: b.mass,
         traits: b.traits,
         immune: this.time < b.immuneUntil,
-        heldBy: b.heldBy,
+        heldBy: [...b.heldBy],
+        holding: this.players[b.id] ? this.holdingChain(b.id) : [],
       })),
     };
+  }
+
+  // pid가 직접·간접으로 들고 있는 것들(A가 B를, B가 C를 들면 A는 B·C). 서로·고리로 들어 끝없이 올라가는 것을 막는 데 쓴다.
+  holdingChain(pid) {
+    const out = new Set();
+    const stack = [pid];
+    while (stack.length) {
+      const items = this.players[stack.pop()]?.holding?.items || [];
+      for (const it of items) {
+        if (out.has(it.id)) continue;
+        out.add(it.id);
+        if (this.players[it.id]) stack.push(it.id);
+      }
+    }
+    return [...out];
   }
 
   // ---------------------------------------------------------------- 입력 처리
@@ -312,8 +330,13 @@ export class Game {
     if (aim) p.aimDir = aim.dir;
     const mods = this.modCounts(pid);
     if (effect === 'PUSH') return this.castPush(pid, mode, aim, view, mods, fail);
-    if (effect === 'FIREBALL') return this.castFireball(pid, aim, mods);
-    if (effect === 'LIFT') return this.startLift(pid, aim, view, fail);
+    if (effect === 'PULL') return this.castPull(pid, mode, aim, view, mods, fail);
+    if (effect === 'FIREBALL') {
+      if (mode === 'SELF') return this.castSelfBlast(pid, aim, mods);
+      if (mode === 'NEAR') return this.castFireballRing(pid, aim, mods);
+      return this.castFireball(pid, aim, mods);
+    }
+    if (effect === 'LIFT') return this.startLift(pid, mode, aim, view, mods, fail);
     return fail(REASON.NO_EFFECT);
   }
 
@@ -348,25 +371,52 @@ export class Game {
     return { ok: true, targets: res.applicable };
   }
 
-  // <파이어볼>: 시전자 앞에서 조준점으로 투사체를 쏜다. 효과는 날아가서 실제로 맞았을 때 적용한다.
-  castFireball(pid, aim, mods) {
+  // <당기기>: 즉시 발동, 한 번 적용. 대상을 시전자 앞까지 끌어온다(지면 마찰로 멈출 거리만큼의 속도).
+  // 조준 모드에서 지형을 당기면 반대로 시전자가 그 지점으로 끌려간다(수평으로만) [제안안]
+  castPull(pid, mode, aim, view, mods, fail) {
     const T = this.T;
+    const reach = modFactor(T, mods, 'BIG', 'pullReach');
+    const cap = T.pullMaxSpeed * modFactor(T, mods, 'STRONG', 'pullForce');
+    const res = resolveTargets(mode, 'PULL', this.targetingWorld(view), pid, aim, { range: T.aimedMaxRange * reach, radius: T.nearbyRadius * reach }, T);
+    if (!res.applicable.length) return fail(res.reason);
     const caster = this.body(pid);
-    let fwd = normalize([aim.dir[0], 0, aim.dir[2]]);
-    if (!fwd[0] && !fwd[2]) fwd = [Math.sin(caster.yaw), 0, Math.cos(caster.yaw)];
-    let spawn = [caster.pos[0] + fwd[0] * T.fireballSpawnForward, caster.pos[1] + 0.25, caster.pos[2] + fwd[2] * T.fireballSpawnForward];
-    if (segmentBlocked(caster.pos, spawn, this.statics)) spawn = [...caster.pos];
-    // 조준점: 카메라 조준선이 처음 닿는 곳(없으면 먼 지점)
-    let t = T.aimPointRange;
-    for (const s of this.statics) { const h = rayBox(aim.origin, aim.dir, s, t); if (h !== null && h < t) t = h; }
-    for (const b of this.bodies) {
-      if (b.id === pid) continue;
-      const h = rayBox(aim.origin, aim.dir, boxOfBody(b), t);
-      if (h !== null && h < t) t = h;
+    // 남은 거리 d를 지면 마찰로 멈추며 지나가는 속도 √(2·마찰·d), 상한 cap
+    const speedFor = (d) => Math.min(cap, Math.sqrt(2 * T.extGroundFriction * Math.max(0, d)));
+    const kick = (b, dir, v) => {
+      b.ext[0] += dir[0] * v;
+      b.ext[1] += dir[1] * v;
+      b.extCap = Math.max(cap, T.pushMaxSpeed);
+      clampExt(b, b.extCap);
+    };
+    const sel = res.selection.selected[0];
+    let targets;
+    if (mode === 'AIM' && sel?.type === 'static') {
+      const hp = res.selection.hitPoint;
+      const d = [hp[0] - caster.pos[0], hp[2] - caster.pos[2]];
+      const l = Math.hypot(d[0], d[1]);
+      if (l < 0.3) return fail(REASON.NO_TARGET);
+      kick(caster, [d[0] / l, d[1] / l], speedFor(l - caster.half[0] - 0.1));
+      targets = [pid];
+      this.emit({ k: 'cast', by: pid, effect: 'PULL', mode, mods, targets, anchor: hp.map(r3) });
+    } else {
+      for (const id of res.applicable) {
+        const b = this.body(id);
+        const d = [caster.pos[0] - b.pos[0], caster.pos[2] - b.pos[2]];
+        const l = Math.hypot(d[0], d[1]);
+        if (l < 1e-3) continue;
+        kick(b, [d[0] / l, d[1] / l], speedFor(l - T.pullStopDistance));
+      }
+      targets = res.applicable;
+      this.emit({ k: 'cast', by: pid, effect: 'PULL', mode, mods, targets });
     }
-    const aimPoint = aim.origin.map((o, i) => o + aim.dir[i] * t);
-    let dir = normalize(aimPoint.map((v, i) => v - spawn[i]));
-    if (dir[0] * aim.dir[0] + dir[1] * aim.dir[1] + dir[2] * aim.dir[2] < 0.2) dir = aim.dir;
+    this.faceAim(pid, aim);
+    this.players[pid].cooldownUntil = this.time + T.castCooldown;
+    return { ok: true, targets };
+  }
+
+  // 투사체 하나 생성(수식 반영)
+  spawnFireball(pid, spawn, dir, mods) {
+    const T = this.T;
     const proj = {
       id: this.nextProjectileId++,
       owner: pid,
@@ -378,32 +428,140 @@ export class Game {
       life: T.fireballLife,
     };
     this.projectiles.push(proj);
+    return proj;
+  }
+
+  // 시전자 앞 수평 방향 fwd로 발사 위치. 벽에 막히면 몸 중심에서.
+  fireballSpawnPoint(caster, fwd) {
+    const T = this.T;
+    const spawn = [caster.pos[0] + fwd[0] * T.fireballSpawnForward, caster.pos[1] + 0.25, caster.pos[2] + fwd[2] * T.fireballSpawnForward];
+    return segmentBlocked(caster.pos, spawn, this.statics) ? [...caster.pos] : spawn;
+  }
+
+  // <파이어볼>(조준): 시전자 앞에서 조준점으로 투사체를 쏜다. 효과는 날아가서 실제로 맞았을 때 적용한다.
+  castFireball(pid, aim, mods) {
+    const T = this.T;
+    const caster = this.body(pid);
+    let fwd = normalize([aim.dir[0], 0, aim.dir[2]]);
+    if (!fwd[0] && !fwd[2]) fwd = [Math.sin(caster.yaw), 0, Math.cos(caster.yaw)];
+    const spawn = this.fireballSpawnPoint(caster, fwd);
+    // 조준점: 카메라 조준선이 처음 닿는 곳(없으면 먼 지점)
+    let t = T.aimPointRange;
+    for (const s of this.statics) { const h = rayBox(aim.origin, aim.dir, s, t); if (h !== null && h < t) t = h; }
+    for (const b of this.bodies) {
+      if (b.id === pid) continue;
+      const h = rayBox(aim.origin, aim.dir, boxOfBody(b), t);
+      if (h !== null && h < t) t = h;
+    }
+    const aimPoint = aim.origin.map((o, i) => o + aim.dir[i] * t);
+    let dir = normalize(aimPoint.map((v, i) => v - spawn[i]));
+    if (dir[0] * aim.dir[0] + dir[1] * aim.dir[1] + dir[2] * aim.dir[2] < 0.2) dir = aim.dir;
+    const proj = this.spawnFireball(pid, spawn, dir, mods);
     this.faceAim(pid, aim);
     this.players[pid].cooldownUntil = this.time + T.castCooldown;
-    this.emit({ k: 'cast', by: pid, effect: 'FIREBALL', mode: 'AIM', mods, projectile: proj.id, radius: r3(proj.radius), targets: [] });
+    this.emit({ k: 'cast', by: pid, effect: 'FIREBALL', mode: 'AIM', mods, projectile: proj.id, projectiles: [proj.id], radius: r3(proj.radius), targets: [] });
     return { ok: true, projectile: proj.id };
   }
 
-  // <들기>: 조준한 대상을 잡고, 시전자가 시전 종료를 누를 때까지 시점을 따라 끌고 다닌다.
-  startLift(pid, aim, view, fail) {
+  // <파이어볼>(주변): 시전자 둘레 사방으로 수평 발사. 각 투사체는 실제로 맞은 대상에만 적용한다 [제안안]
+  castFireballRing(pid, aim, mods) {
+    const T = this.T;
+    const caster = this.body(pid);
+    const yaw = aim && (aim.dir[0] || aim.dir[2]) ? Math.atan2(aim.dir[0], aim.dir[2]) : caster.yaw;
+    const ids = [];
+    let radius = 0;
+    for (let i = 0; i < T.fireballNearCount; i++) {
+      const a = yaw + (i / T.fireballNearCount) * Math.PI * 2;
+      const fwd = [Math.sin(a), 0, Math.cos(a)];
+      const proj = this.spawnFireball(pid, this.fireballSpawnPoint(caster, fwd), fwd, mods);
+      ids.push(proj.id);
+      radius = proj.radius;
+    }
+    this.faceAim(pid, aim);
+    this.players[pid].cooldownUntil = this.time + T.castCooldown;
+    this.emit({ k: 'cast', by: pid, effect: 'FIREBALL', mode: 'NEAR', mods, projectile: ids[0], projectiles: ids, radius: r3(radius), targets: [] });
+    return { ok: true, projectiles: ids };
+  }
+
+  // <파이어볼>(본인): 발밑 폭발. 시전자는 피해·디버프 없이 땅에 있을 때만 튀어 오르고, 주변은 폭발을 맞는다 [제안안]
+  castSelfBlast(pid, aim, mods) {
+    const T = this.T;
+    const caster = this.body(pid);
+    const fwd = [Math.sin(caster.yaw), 0, Math.cos(caster.yaw)];
+    const point = [caster.pos[0], bottomOf(caster) + 0.2, caster.pos[2]];
+    const pr = {
+      id: this.nextProjectileId++,
+      owner: pid,
+      vel: fwd,
+      blast: T.fireballBlastRadius * modFactor(T, mods, 'BIG', 'blastRadius'),
+      damage: T.fireballDamage * modFactor(T, mods, 'STRONG', 'fireballDamage'),
+    };
+    const launched = caster.grounded && !caster.heldBy.length;
+    if (launched) { caster.vy = Math.max(caster.vy, T.fireballSelfLaunch); caster.grounded = false; }
+    this.players[pid].cooldownUntil = this.time + T.castCooldown;
+    this.emit({ k: 'cast', by: pid, effect: 'FIREBALL', mode: 'SELF', mods, targets: [pid], launched });
+    this.explode(pr, point, { type: 'self' });
+    return { ok: true, launched };
+  }
+
+  // <들기>: 조준 모드는 조준한 하나, 주변 모드는 반경 안의 들 수 있는 것들을 가벼운 것부터 힘이 닿는 만큼 잡는다.
+  // 이미 다른 사람이 들고 있는 물체에는 합류해 같이 든다(무게를 나눠 든다). 시전 종료 전까지 계속 제어한다.
+  // 조준 모드는 혼자 힘으로 못 드는 물체도 "붙잡을" 수 있다: 바닥에서 뜨지 않다가 같이 들 사람이 합류하면 올라간다 [제안안]
+  startLift(pid, mode, aim, view, mods, fail) {
     const T = this.T;
     const caster = this.body(pid);
     const capacity = this.liftCapacity(pid);
-    const res = resolveTargets('AIM', 'LIFT', this.targetingWorld(view), pid, aim, { range: T.liftRange, capacity, casterGround: caster.groundId }, T);
+    const radius = T.nearbyRadius * modFactor(T, mods, 'BIG', 'liftReach');
+    // 조준 모드는 무게로 거절하지 않는다(붙잡기). 주변 모드는 아래에서 힘이 닿는 만큼만 고른다.
+    const opts = { range: T.liftRange, radius, capacity: mode === 'NEAR' ? capacity : undefined, load: 0, casterGround: caster.groundId };
+    const world = this.targetingWorld(view);
+    const res = resolveTargets(mode, 'LIFT', world, pid, aim, opts, T);
     if (!res.applicable.length) return fail(res.reason);
-    const b = this.body(res.applicable[0]);
+    let picked = res.applicable.map((id) => this.body(id));
+    if (mode === 'NEAR') {
+      // 가벼운 것부터, 나눠 든 무게의 합이 힘 안에 들 때까지
+      picked.sort((a, b) => a.mass - b.mass);
+      let load = 0;
+      picked = picked.filter((b) => {
+        const share = liftShare(b.mass, b.heldBy.length + 1);
+        if (load + share > capacity + 1e-9) return false;
+        load += share;
+        return true;
+      });
+      if (!picked.length) return fail(REASON.TOO_HEAVY);
+    } else {
+      picked = picked.slice(0, 1);
+    }
+    const yaw0 = Math.atan2(this.players[pid].aimDir[0], this.players[pid].aimDir[2]);
     const eye = [caster.pos[0], caster.pos[1] + T.liftEye, caster.pos[2]];
-    const holdDist = Math.max(T.liftHoldMin, Math.min(T.liftHoldMax, dist(eye, b.pos)));
-    this.players[pid].holding = { target: b.id, dist: holdDist };
-    b.heldBy = pid;
-    b.grounded = false;
+    const items = picked.map((b) => {
+      if (mode === 'NEAR') {
+        // 시전 순간의 시선 기준 상대 위치를 기억했다가, 시점을 돌리면 같이 돈다
+        const ox = b.pos[0] - caster.pos[0];
+        const oz = b.pos[2] - caster.pos[2];
+        const c = Math.cos(-yaw0);
+        const sn = Math.sin(-yaw0);
+        return { id: b.id, off: [ox * c + oz * sn, -ox * sn + oz * c] };
+      }
+      return { id: b.id, dist: Math.max(T.liftHoldMin, Math.min(T.liftHoldMax, dist(eye, b.pos))) };
+    });
+    this.players[pid].holding = { mode, items };
+    for (const b of picked) {
+      b.heldBy.push(pid);
+      b.grounded = false;
+    }
     this.faceAim(pid, aim);
-    this.emit({ k: 'liftStart', by: pid, target: b.id, mods: this.modCounts(pid) });
-    return { ok: true, targets: [b.id] };
+    const targets = picked.map((b) => b.id);
+    const joined = picked.filter((b) => b.heldBy.length > 1).map((b) => b.id);
+    // 붙잡기만 되는(같이 들어야 올라가는) 물체
+    const loads = liftLoads(this.bodies);
+    const heavy = picked.filter((b) => this.strainOf(b, loads) > 1 + 1e-9).map((b) => b.id);
+    this.emit({ k: 'liftStart', by: pid, mode, target: targets[0], targets, joined, heavy, mods: this.modCounts(pid) });
+    return { ok: true, targets, joined, heavy };
   }
 
   // 시전 종료: 시전자가 자신이 유지 중인 지속형 마법(현재는 <들기>뿐)을 직접 끝낸다.
-  // 다른 사람이 건 마법에서 벗어나는 해제(R, onRelease)와는 별개다.
+  // 다른 사람이 건 마법에서 벗어나는 해제(R, onRelease)와는 별개다. 같이 들던 사람은 계속 든다.
   onEndCast(pid) {
     if (!this.players[pid].holding) return { ok: false };
     this.endHold(pid, 'released');
@@ -411,42 +569,94 @@ export class Game {
     return { ok: true };
   }
 
-  // 들기 종료. 물체는 그때의 속도를 그대로 가진다(던지기) [임시].
+  // 물체의 버거움: 드는 사람들의 (나눠 든 무게 합 / 힘)의 조화 평균. 1을 넘으면 바닥에서 뜨지 않는다.
+  strainOf(b, loads = liftLoads(this.bodies)) {
+    return liftStrain(b.heldBy.map((pid) => ({ load: loads.get(pid) || b.mass, capacity: this.liftCapacity(pid) })));
+  }
+
+  // 한 사람이 물체 하나를 놓는다. 마지막으로 들던 사람이 놓으면 물체는 그때의 속도를 그대로 가진다(던지기) [임시].
+  releaseItem(pid, bodyId, reason) {
+    const p = this.players[pid];
+    if (!p?.holding) return;
+    p.holding.items = p.holding.items.filter((it) => it.id !== bodyId);
+    if (!p.holding.items.length) p.holding = null;
+    const b = this.body(bodyId);
+    if (b) {
+      b.heldBy = b.heldBy.filter((h) => h !== pid);
+      if (!b.heldBy.length) {
+        b.hold = null;
+        b.strained = false;
+        b.extCap = this.T.pushMaxSpeed;
+      }
+    }
+    this.emit({ k: 'liftEnd', by: pid, target: bodyId, reason, still: b ? [...b.heldBy] : [] });
+  }
+
+  // 들고 있는 것을 모두 놓는다
   endHold(pid, reason) {
     const p = this.players[pid];
     if (!p || !p.holding) return;
-    const b = this.body(p.holding.target);
-    if (b) {
-      b.hold = null;
-      b.heldBy = null;
-      b.extCap = this.T.pushMaxSpeed;
-    }
-    p.holding = null;
-    this.emit({ k: 'liftEnd', by: pid, target: b?.id, reason });
+    for (const it of [...p.holding.items]) this.releaseItem(pid, it.id, reason);
   }
 
-  // 매 틱 들린 물체의 목표 지점을 정한다: 시선 방향 앞 일정 거리, 무게에 따라 높이 상한.
+  // 매 틱 들린 물체의 목표 지점을 정한다.
+  // 각자의 목표(조준: 시선 앞 일정 거리 / 주변: 시전자 둘레의 상대 위치)를 드는 사람끼리 평균하고,
+  // 버거움(나눠 든 무게/힘)에 따라 높이 상한과 끄는 가속도를 정한다.
   updateHolds() {
     const T = this.T;
+    // 1) 단어·거리·대상 확인
     for (const pid of this.seats) {
       const p = this.players[pid];
       if (!p.holding) continue;
       const caster = this.body(pid);
-      const b = this.body(p.holding.target);
-      const capacity = this.liftCapacity(pid);
-      if (!caster || !b) { this.endHold(pid, 'gone'); continue; }
+      if (!caster) { this.endHold(pid, 'gone'); continue; }
       if (this.effectWord(pid) !== 'LIFT') { this.endHold(pid, 'word'); continue; } // 단어를 내려놓거나 바꾸면 놓친다 [임시]
-      if (b.mass > capacity + 1e-9) { this.endHold(pid, 'heavy'); continue; } // <세게>를 넘겨주면 힘이 줄어든다
-      if (dist(caster.pos, b.pos) > T.liftBreakDistance) { this.endHold(pid, 'far'); continue; }
-      const eye = [caster.pos[0], caster.pos[1] + T.liftEye, caster.pos[2]];
-      const target = eye.map((v, i) => v + p.aimDir[i] * p.holding.dist);
-      const maxBottom = liftMaxBottom(bottomOf(caster), b.mass, capacity, T);
+      for (const it of [...p.holding.items]) {
+        const b = this.body(it.id);
+        if (!b) this.releaseItem(pid, it.id, 'gone');
+        else if (dist(caster.pos, b.pos) > T.liftBreakDistance) this.releaseItem(pid, it.id, 'far');
+      }
+    }
+    // 2) 물체별 목표 지점. 힘이 모자라면(버거움 > 1: <세게>를 넘겨줬거나 같이 들던 사람이 놓았을 때)
+    //    놓치지는 않지만 바닥에서 뜨지 못한다(중력·마찰을 그대로 받는다). 같이 들 사람이 오면 다시 올라간다.
+    const caps = new Map(this.seats.map((pid) => [pid, this.liftCapacity(pid)]));
+    const loads = liftLoads(this.bodies);
+    for (const b of this.bodies) {
+      if (!b.heldBy.length) { b.hold = null; b.strained = false; continue; }
+      const sum = [0, 0, 0];
+      let bottomSum = 0;
+      const strainIn = [];
+      for (const pid of b.heldBy) {
+        const p = this.players[pid];
+        const caster = this.body(pid);
+        const it = p.holding.items.find((x) => x.id === b.id);
+        let target;
+        if (it.off) {
+          const yaw = Math.atan2(p.aimDir[0], p.aimDir[2]);
+          const c = Math.cos(yaw);
+          const sn = Math.sin(yaw);
+          const ox = it.off[0] * c + it.off[1] * sn;
+          const oz = -it.off[0] * sn + it.off[1] * c;
+          target = [caster.pos[0] + ox, bottomOf(caster) + T.liftNearHeight + b.half[1], caster.pos[2] + oz];
+        } else {
+          const eye = [caster.pos[0], caster.pos[1] + T.liftEye, caster.pos[2]];
+          target = eye.map((v, i) => v + p.aimDir[i] * it.dist);
+        }
+        for (let i = 0; i < 3; i++) sum[i] += target[i];
+        bottomSum += bottomOf(caster);
+        strainIn.push({ load: loads.get(pid) || b.mass, capacity: caps.get(pid) });
+      }
+      const n = b.heldBy.length;
+      const target = sum.map((v) => v / n);
+      const strain = liftStrain(strainIn);
+      b.strained = strain > 1 + 1e-9;
+      if (b.strained) { b.hold = null; continue; }
+      const maxBottom = liftMaxBottom(bottomSum / n, strain, T);
       if (target[1] - b.half[1] > maxBottom) target[1] = maxBottom + b.half[1];
-      // 무거울수록 끄는 힘의 여유가 적어 더 느리게 따라온다 [임시]
-      const amax = T.liftMaxAccel * Math.max(0.15, 1 - b.mass / capacity);
+      // 버거울수록 끄는 힘의 여유가 적어 더 느리게 따라온다 [임시]
+      const amax = T.liftMaxAccel * Math.max(0.15, 1 - strain);
       b.hold = { target, k: T.liftSpring, c: T.liftDamping, amax };
     }
-    for (const b of this.bodies) if (!b.heldBy) b.hold = null;
   }
 
   onPickup(pid) {
@@ -527,7 +737,7 @@ export class Game {
     if (this.time < p.releaseReadyAt) return { ok: false };
     const b = this.body(pid);
     // 자신에게 걸린 외부 이동·들림을 풀고, 다른 플레이어의 마법에 잠시 면역 [임시: v0.2 규칙 유지]
-    if (b.heldBy) this.endHold(b.heldBy, 'released-by-target');
+    for (const h of [...b.heldBy]) this.releaseItem(h, b.id, 'released-by-target');
     b.ext = [0, 0];
     if (b.vy > 0) b.vy = 0;
     b.immuneUntil = this.time + this.T.releaseImmunity;
@@ -693,7 +903,7 @@ export class Game {
   // 낙하 복구: 진행 중인 효과·들기와 속도를 초기화하고 빈 자리를 찾아 둔다.
   recoverBody(b) {
     const base = this.safePoint(b.lastSafe, [0, 0, 0], b.spawn);
-    if (b.heldBy) this.endHold(b.heldBy, 'fell');
+    for (const h of [...b.heldBy]) this.releaseItem(h, b.id, 'fell');
     if (this.players[b.id]?.holding) this.endHold(b.id, 'fell');
     b.ext = [0, 0];
     b.inVel = [0, 0];
@@ -759,7 +969,8 @@ export class Game {
           d: r3(Math.max(0, b.debuffUntil - t)), // 디버프(그을림)
           g: b.grounded ? 1 : 0,
         };
-        if (b.heldBy) o.h = b.heldBy; // 들고 있는 사람
+        if (b.heldBy.length) o.h = [...b.heldBy]; // 들고 있는 사람들
+        if (b.strained) o.hv = 1; // 붙잡혔지만 힘이 모자라 뜨지 못함
         if (b.hp !== null) { o.hp = r3(b.hp); o.dn = b.downUntil ? 1 : 0; }
         return o;
       }),
@@ -773,7 +984,7 @@ export class Game {
           mc: this.modCounts(pid),
           cd: r3(Math.max(0, pl.cooldownUntil - t)),
           inv: this.inventory(pid).map((tk) => tk.id),
-          hold: pl.holding?.target || null,
+          hold: pl.holding ? pl.holding.items.map((it) => it.id) : null, // 들고 있는 물체들
         }];
       })),
       g: { t: r3(this.goal.timer), c: this.goal.cleared, in: this.goal.inside },

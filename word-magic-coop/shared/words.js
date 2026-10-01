@@ -8,14 +8,16 @@ export const MODE_ORDER = ['AIM', 'SELF', 'NEAR'];
 export const MODE_LABEL = { AIM: '조준 대상', SELF: '본인', NEAR: '주변' };
 
 // cast: 효과마다 시전·전달·적용 방식이 다르다.
-//   instant    — 즉시 발동, 한 번 적용 (밀치기)
+//   instant    — 즉시 발동, 한 번 적용 (밀치기, 당기기)
 //   hold       — 시전하면 유지되는 지속형. 시전자가 '시전 종료'로 직접 끝낸다 (들기)
 //   projectile — 투사체가 날아가 실제로 맞은 대상에 적용 (파이어볼)
-// modes: 이 효과를 쓸 수 있는 대상 모드. 나머지 조합은 기획 미정이라 막아 둔다(임시).
+// modes: 이 효과를 쓸 수 있는 대상 모드. 빠진 조합은 막아 둔다.
+//   본인+들기·본인+당기기: 막음 — 혼자 높은 곳에 오르면 "친구가 들어 줘야 넘는" 협동이 깨진다 [제안안]
 export const WORDS = {
   PUSH: { id: 'PUSH', label: '밀치기', kind: KIND.EFFECT, cast: 'instant', modes: ['AIM', 'SELF', 'NEAR'] },
-  LIFT: { id: 'LIFT', label: '들기', kind: KIND.EFFECT, cast: 'hold', modes: ['AIM'] },
-  FIREBALL: { id: 'FIREBALL', label: '파이어볼', kind: KIND.EFFECT, cast: 'projectile', modes: ['AIM'] },
+  PULL: { id: 'PULL', label: '당기기', kind: KIND.EFFECT, cast: 'instant', modes: ['AIM', 'NEAR'] },
+  LIFT: { id: 'LIFT', label: '들기', kind: KIND.EFFECT, cast: 'hold', modes: ['AIM', 'NEAR'] },
+  FIREBALL: { id: 'FIREBALL', label: '파이어볼', kind: KIND.EFFECT, cast: 'projectile', modes: ['AIM', 'SELF', 'NEAR'] },
   BIG: { id: 'BIG', label: '큰', kind: KIND.MOD },
   STRONG: { id: 'STRONG', label: '세게', kind: KIND.MOD },
 };
