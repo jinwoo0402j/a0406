@@ -57,6 +57,8 @@ try {
   await B.waitForFunction(() => window.__wm.phase === 'playing' && window.__wm.latest);
   await sleep(800);
   check('두 클라이언트가 접속해 게임 시작', true);
+  const guide0 = await A.evaluate(() => document.getElementById('guide').textContent);
+  check("'처음 해보기' 안내가 첫 할 일을 보여 줌", /처음 해보기 1\/5/.test(guide0) && /좌클릭/.test(guide0), guide0);
   await A.screenshot({ path: `${OUT}/01-A-start.png` });
   await B.screenshot({ path: `${OUT}/01-B-start.png` });
 
@@ -75,6 +77,8 @@ try {
   const b1a = await bodyOf(A, 'B');
   const moved = Math.hypot(b1.p[0] - b0.p[0], b1.p[2] - b0.p[2]);
   check('<밀치기>로 B가 밀림', moved > 0.8, `${moved.toFixed(2)}m`);
+  const guide1 = await A.evaluate(() => document.getElementById('guide').textContent);
+  check('써 보고 나면 안내가 다음 단계(F 모드)로', /2\/5/.test(guide1) && /F/.test(guide1), guide1);
   check('두 화면이 같은 B 위치를 봄', Math.hypot(b1.p[0] - b1a.p[0], b1.p[2] - b1a.p[2]) < 0.6);
 
   // 2) B가 <들기>로 돌을 든다: 시전 종료 전까지 유지, 시점을 올리면 따라 올라간다
@@ -172,12 +176,13 @@ try {
     const b = srv.game.body(id);
     Object.assign(b, { pos: [x, y + b.half[1], z], vy: 0, ext: [0, 0], inVel: [0, 0] });
   };
+  place('rock', [-5, 0, 3]); // 앞 단계에서 던진 돌이 떨어진 자리와 겹치지 않게
   place('A', [3, 0, 8]);
   place('B', [4.4, 0, 8.6]);
   place('box1', [1.8, 0, 9]);
   await A.evaluate(() => window.__wm.setView(0.3, -0.35));
-  await sleep(700);
-  const nb = await A.evaluate(() => ({ kind: window.__wm.preview?.kind, ok: [...(window.__wm.preview?.ok || [])] }));
+  await A.waitForFunction(() => { const ok = window.__wm.preview?.ok; return ok?.has('B') && ok?.has('box1'); }, null, { timeout: 3000 }).catch(() => {});
+  const nb = await A.evaluate(() => ({ kind: window.__wm.preview?.kind, ok: [...(window.__wm.preview?.ok || [])], at: window.__wm.previewNow().bodies }));
   check('[시각] 주변 모드 범위 표시와 친구·상자 강조', nb.kind === 'push' && nb.ok.includes('B') && nb.ok.includes('box1'), JSON.stringify(nb));
   await A.screenshot({ path: `${OUT}/10-A-near-preview.png` });
   await A.evaluate(() => window.__wm.cast());
@@ -235,6 +240,21 @@ try {
   await A.evaluate(() => window.__wm.endCast());
   await sleep(1300);
 
+  // [브라우저] 건네주기: A가 편집창에서 "B에게 주기"를 누르면 B가 바로 받는다(내려놓기·줍기 없이)
+  place('A', [0, 0, 8]); place('B', [1.4, 0, 8]); place('rock', [-3, 0, 6]); place('box1', [3, 0, 6]);
+  await sleep(700);
+  await A.keyboard.press('Tab');
+  await sleep(400);
+  const giveBtn = A.locator('.inv-card', { hasText: '들기' }).getByRole('button', { name: 'B에게 주기' });
+  check('편집창에 가까운 친구에게 주기 버튼', await giveBtn.isEnabled().catch(() => false));
+  await giveBtn.click();
+  await sleep(500);
+  await A.keyboard.press('Tab');
+  const bInv = await B.evaluate(() => window.__wm.latest.p.B.inv);
+  const bToast = await B.evaluate(() => document.getElementById('toast').textContent);
+  check('[브라우저] B가 바로 받고 안내가 뜸', bInv.includes('w8') && /받았어요/.test(bToast), `${bInv} / ${bToast}`);
+  await sleep(300);
+
   place('cargo', [0, 1.6, 34]);
   place('A', [-1.5, 1.6, 34]);
   place('B', [1.5, 1.6, 33.6]);
@@ -243,6 +263,8 @@ try {
   await Promise.all([A, B].map((p) => p.waitForFunction(() => !document.getElementById('clear-banner').hidden, null, { timeout: 5000 }).catch(() => {})));
   const cleared = await Promise.all([A, B].map((p) => p.evaluate(() => !document.getElementById('clear-banner').hidden)));
   check('[시각] 도착 성공 표시가 양쪽 화면에 보임', cleared.every(Boolean), JSON.stringify(cleared));
+  const summary = await A.evaluate(() => document.getElementById('clear-summary').textContent);
+  check('도착하면 판 요약이 보임(주문 수·같이 들기·건네기)', /A: 주문 \d+번/.test(summary) && /같이 들기 [1-9]/.test(summary) && /건네기 1/.test(summary), summary.replace(/\n/g, ' | '));
   await A.screenshot({ path: `${OUT}/14-A-clear.png` });
 
   // 7) B의 연결이 끊기면 A는 안내 후 로비로
