@@ -4,9 +4,9 @@ import { Renderer } from './render.js';
 import { rigFor, CAM } from './camera.js';
 import { FONT_STACK } from './labels.js';
 import { LEVEL, SEAT_IDS, bodyDefs } from '../shared/level.js';
-import { TUNING, modFactor } from '../shared/tuning.js';
+import { TUNING } from '../shared/tuning.js';
 import { WORDS, KIND, MOD_IDS, MODE_ORDER, MODE_LABEL, traitsOf } from '../shared/words.js';
-import { resolveTargets, modeUnsupported, REASON, liftShare } from '../shared/targeting.js';
+import { REASON } from '../shared/targeting.js';
 import { segmentBlocked } from '../shared/geom.js';
 import { HostSession } from './host.js';
 import { Sfx } from './sfx.js';
@@ -14,6 +14,8 @@ import { Inventory, HOTBAR, MAIN, MIX } from './inventory.js';
 import { hostRoom, joinRoom, CODE_RE } from './p2p.js';
 import { icon, key, chip, esc, EFFECT_ICON, MODE_ICON } from './icons.js';
 import { SelfPredictor } from './predict.js';
+import { PlayStats } from './stats.js';
+import { buildPreview as previewFor, holdingChainOf } from './preview.js';
 
 const $ = (id) => document.getElementById(id);
 // 화면 요소는 값이 바뀔 때만 고친다(같은 값을 매 프레임 써도 다시 그려져 느려진다)
@@ -66,7 +68,7 @@ const S = {
   rtt: 0, // 호스트까지 왕복 지연(초)
   holding: false, // 내가 유지 중인 지속형 마법(<들기>)이 있음 — 시전 종료로 끝낸다
   did: { cast: false, mode: false, pickup: false, attach: false, share: false }, // '처음 해보기' 안내 진행
-  stats: null, // 판 요약(플레이테스트 관찰용)
+  stats: new PlayStats(), // 판 요약(플레이테스트 관찰용, stats.js)
   invs: {}, // 자리별 가방(마인크래프트식 칸 배치)
   hover: null, // 가방 창에서 마우스가 올라간 칸
   bagKey: '',
@@ -372,7 +374,7 @@ setInterval(() => { if (S.phase === 'playing') send({ t: 'rtt', c: performance.n
 function startPlaying() {
   predictor.reset();
   S.phase = 'playing';
-  S.stats = newStats();
+  S.stats = new PlayStats();
   S.snaps = [];
   S.latest = null;
   S.offset = null;
@@ -566,98 +568,9 @@ function playSfx(e) {
   }
 }
 
-// ------------------------------------------------------------------ 판 요약
-// 플레이테스트에서 기억 대신 기록으로 본다(v0.2 08: 친구·사물에 고루 쓰는지, 교환하는지, 사고가 나는지).
-function newStats() {
-  return { start: performance.now(), per: {}, colift: 0, friendFire: 0, enemyHit: 0, release: 0, fall: 0, clearedAt: null };
-}
-
-function statOf(pid) {
-  if (!S.stats) S.stats = newStats();
-  if (!S.stats.per[pid]) S.stats.per[pid] = { casts: {}, friend: 0, object: 0, self: 0, pickup: 0, give: 0 };
-  return S.stats.per[pid];
-}
-
-function countTargets(st, by, ids) {
-  for (const id of ids || []) {
-    if (id === by) st.self += 1;
-    else if (SEAT_IDS.includes(id)) st.friend += 1;
-    else st.object += 1;
-  }
-}
-
-function recordStats(e) {
-  if (!S.stats) S.stats = newStats();
-  const T = S.stats;
-  switch (e.k) {
-    case 'cast': {
-      const st = statOf(e.by);
-      const name = `${WORDS[e.effect].label}${e.mode !== 'AIM' ? `(${MODE_LABEL[e.mode]})` : ''}`;
-      st.casts[name] = (st.casts[name] || 0) + 1;
-      countTargets(st, e.by, e.targets);
-      break;
-    }
-    case 'liftStart': {
-      const st = statOf(e.by);
-      const name = `들기${e.mode && e.mode !== 'AIM' ? `(${MODE_LABEL[e.mode]})` : ''}`;
-      st.casts[name] = (st.casts[name] || 0) + 1;
-      countTargets(st, e.by, e.targets || [e.target]);
-      T.colift += (e.joined || []).length;
-      break;
-    }
-    case 'boom':
-      for (const h of e.hits) {
-        if (h.effects.includes('debuff')) T.friendFire += 1;
-        if (h.effects.includes('damage')) T.enemyHit += 1;
-        if (e.by && h.id !== e.by) countTargets(statOf(e.by), e.by, [h.id]);
-      }
-      break;
-    case 'pickup':
-      statOf(e.by).pickup += 1;
-      if (e.from) statOf(e.from).give += 1; // 던진 단어를 친구가 주움 = 건네줌
-      break;
-    case 'release': T.release += 1; break;
-    case 'recover': if (SEAT_IDS.includes(e.id)) T.fall += 1; break;
-    case 'clear': if (!T.clearedAt) T.clearedAt = performance.now(); break;
-    case 'restart': S.stats = newStats(); break;
-    default: break;
-  }
-}
-
-function summaryText() {
-  const T = S.stats || newStats();
-  const sec = Math.round(((T.clearedAt || performance.now()) - T.start) / 1000);
-  const lines = [`${T.clearedAt ? '도착까지' : '지금까지'} ${Math.floor(sec / 60)}분 ${sec % 60}초`];
-  for (const pid of SEAT_IDS) {
-    const st = T.per[pid];
-    if (!st) continue;
-    const total = Object.values(st.casts).reduce((a, b) => a + b, 0);
-    const kinds = Object.entries(st.casts).map(([k, n]) => `${k} ${n}`).join(', ');
-    lines.push(`${pid}: 주문 ${total}번${kinds ? ` (${kinds})` : ''} · 친구에게 ${st.friend} · 물건·적에게 ${st.object} · 나에게 ${st.self} · 단어 줍기 ${st.pickup} · 건네준 단어 ${st.give}`);
-  }
-  lines.push(`같이 들기 ${T.colift}번 · 친구가 파이어볼에 맞음 ${T.friendFire}번 · 적 명중 ${T.enemyHit}번 · R로 풀기 ${T.release}번 · 떨어짐 ${T.fall}번`);
-  return lines.join('\n');
-}
-
-// 도착 화면의 판 요약: 사람마다 주문·친구에게·물건에게·나에게·줍기·건네주기 횟수
-function clearStatsHTML() {
-  const T = S.stats || newStats();
-  const sec = Math.round(((T.clearedAt || performance.now()) - T.start) / 1000);
-  const n = (ic, v, title) => `<span title="${title}">${[].concat(ic).map((x) => icon(x)).join('')}${v}</span>`;
-  const rows = [`<div class="cs-time">${icon('clock')} ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}</div>`];
-  for (const pid of SEAT_IDS) {
-    const st = T.per[pid];
-    if (!st) continue;
-    const total = Object.values(st.casts).reduce((a, b) => a + b, 0);
-    rows.push(`<div class="cs-row">${pc(pid)}${n('wand', total, '주문')}${n('people', st.friend, '친구에게')}${n('box', st.object, '물건·적에게')}${n('self', st.self, '나에게')}${n('leaf', st.pickup, '줍기')}${n('throw', st.give, '건네준 단어')}</div>`);
-  }
-  rows.push(`<div class="cs-row all">${n(['lift', 'people'], T.colift, '같이 들기')}${n(['fire', 'people'], T.friendFire, '친구가 파이어볼에 맞음')}${n('dummy', T.enemyHit, '적 명중')}${n('release', T.release, 'R로 풀기')}${n('down', T.fall, '떨어짐')}</div>`);
-  return rows.join('');
-}
-
 function onEvent(e) {
   try { playSfx(e); } catch { /* 소리는 표시용: 실패해도 진행 */ }
-  recordStats(e);
+  S.stats.record(e);
   S.recent.push(e);
   if (S.recent.length > 30) S.recent.shift();
   if ((e.k === 'cast' || e.k === 'liftStart') && e.by === S.me) S.did.cast = true;
@@ -982,9 +895,9 @@ function tokenWord(id) {
   return S.latest?.k.find((t) => t.id === id)?.w;
 }
 
-$('summary-box').addEventListener('toggle', () => { if ($('summary-box').open) $('summary-text').textContent = summaryText(); });
+$('summary-box').addEventListener('toggle', () => { if ($('summary-box').open) $('summary-text').textContent = S.stats.text(); });
 $('summary-copy').onclick = async () => {
-  const text = summaryText();
+  const text = S.stats.text();
   $('summary-text').textContent = text;
   try { await navigator.clipboard.writeText(text); $('summary-copy').innerHTML = icon('ok'); } catch { $('summary-copy').innerHTML = `${icon('no')} Ctrl+C`; }
   setTimeout(() => { $('summary-copy').innerHTML = icon('copy'); }, 1500);
@@ -1058,89 +971,13 @@ howtoHTML();
 // 편집창 버튼에 포커스가 남으면 Space 등으로 다시 눌릴 수 있으므로 클릭 후 포커스를 푼다.
 $('editor').addEventListener('click', () => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
 
-// ------------------------------------------------------------------ 프레임
 // pid가 직접·간접으로 들고 있는 것들(서버 holdingChain과 같은 규칙)
-function holdingChain(pid) {
-  const out = new Set();
-  const stack = [pid];
-  while (stack.length) {
-    for (const id of S.latest?.p?.[stack.pop()]?.hold || []) {
-      if (out.has(id)) continue;
-      out.add(id);
-      if (S.latest.p[id]) stack.push(id);
-    }
-  }
-  return [...out];
-}
+const holdingChain = (pid) => holdingChainOf(S.latest?.p, pid);
 
+// 조준 미리보기(preview.js)
 function buildPreview(bodies, rig) {
   const ps = mySnap();
-  if (!ps || !rig) return null;
-  const none = { ok: new Set(), bad: new Set() };
-  const ew = ps.e && tokenWord(ps.e);
-  if (!ew) return { kind: 'none', reason: REASON.NO_EFFECT, ...none };
-  if (!WORDS[ew].modes.includes(S.mode)) return { kind: 'mode', reason: modeUnsupported(ew, S.mode), ...none };
-  if (ps.hold?.length) return { kind: 'holding', ok: new Set(ps.hold), bad: new Set() };
-  const mc = ps.mc || {};
-  if (ew === 'FIREBALL') {
-    if (S.mode === 'SELF') return { kind: 'blast', radius: TUNING.fireballBlastRadius * modFactor(TUNING, mc, 'BIG', 'blastRadius'), ...none };
-    return { kind: S.mode === 'NEAR' ? 'firering' : 'fire', ...none };
-  }
-  if (ew === 'WATER') return { kind: S.mode === 'SELF' ? 'wash' : S.mode === 'NEAR' ? 'waterring' : 'water', ...none };
-  const world = {
-    statics: LEVEL.statics,
-    bodies: [...bodies].map(([id, v]) => {
-      const d = BODY_DEF.get(id);
-      return {
-        id, kind: d.kind, pos: v.p, half: halfOf(id, v), mass: d.mass ?? 1,
-        traits: traitsOf(d.kind),
-        immune: v.i > 0, heldBy: v.h || [], holding: S.latest?.p?.[id] ? holdingChain(id) : [], empty: v.st === 0,
-      };
-    }),
-  };
-  const aim = { origin: rig.pos, dir: rig.dir };
-  let res;
-  let radius = 0;
-  const heavy = new Set();
-  if (ew === 'PUSH' || ew === 'PULL' || ew === 'FIRE' || ew === 'STEAM') {
-    const reach = modFactor(TUNING, mc, 'BIG', { PUSH: 'pushReach', PULL: 'pullReach', FIRE: 'fireReach', STEAM: 'steamReach' }[ew]);
-    radius = TUNING.nearbyRadius * reach;
-    res = resolveTargets(S.mode, ew, world, S.me, aim, { range: TUNING.aimedMaxRange * reach, radius, ghosts: ew === 'PULL' });
-  } else {
-    const capacity = TUNING.liftCapacity * modFactor(TUNING, mc, 'STRONG', 'liftCapacity');
-    if (S.mode === 'NEAR') {
-      // 서버와 같은 규칙: 가벼운 것부터, 나눠 든 무게의 합이 힘 안에 들 때까지
-      radius = TUNING.nearbyRadius * modFactor(TUNING, mc, 'BIG', 'liftReach');
-      res = resolveTargets('NEAR', 'LIFT', world, S.me, aim, { radius, capacity, load: 0 });
-      const byId = new Map(world.bodies.map((b) => [b.id, b]));
-      let load = 0;
-      const picked = [];
-      for (const b of res.applicable.map((id) => byId.get(id)).sort((p, q) => p.mass - q.mass)) {
-        const share = liftShare(b.mass, b.heldBy.length + 1);
-        if (load + share > capacity + 1e-9) { res.rejected.push({ id: b.id, type: 'body', reason: REASON.TOO_HEAVY }); continue; }
-        load += share;
-        picked.push(b.id);
-      }
-      res.applicable = picked;
-      if (!picked.length) res.reason = res.reason || REASON.TOO_HEAVY;
-    } else {
-      // 조준 들기는 무거워도 붙잡을 수 있다(혼자서는 안 올라감)
-      res = resolveTargets('AIM', 'LIFT', world, S.me, aim, { range: TUNING.liftRange });
-      for (const id of res.applicable) {
-        const b = world.bodies.find((x) => x.id === id);
-        if (liftShare(b.mass, b.heldBy.length + 1) > capacity + 1e-9) heavy.add(id);
-      }
-    }
-  }
-  return {
-    kind: ew === 'LIFT' ? 'lift' : 'push',
-    effect: ew,
-    res,
-    radius,
-    heavy,
-    ok: new Set(res.applicable.filter((id) => bodies.has(id))),
-    bad: new Set(res.rejected.filter((r) => r.type === 'body').map((r) => r.id)),
-  };
+  return previewFor({ ps, effect: ps?.e && tokenWord(ps.e), mode: S.mode, me: S.me, players: S.latest?.p, bodies, rig, defs: BODY_DEF });
 }
 
 // ------------------------------------------------------------------ 가방·핫바(마인크래프트식)
@@ -1486,7 +1323,7 @@ function updateHud(frame) {
   for (const el of items.children) el.classList.toggle('in', !!g.in[el.dataset.k]);
   setWidth($('goal-fill'), `${Math.round(Math.min(1, g.t / TUNING.goalHoldTime) * 100)}%`);
   setHidden($('clear-banner'), !g.c);
-  if (g.c && !$('clear-stats').dataset.done) { $('clear-stats').innerHTML = clearStatsHTML(); $('clear-stats').dataset.done = '1'; }
+  if (g.c && !$('clear-stats').dataset.done) { $('clear-stats').innerHTML = S.stats.html(pc); $('clear-stats').dataset.done = '1'; }
   if (!g.c && $('clear-stats').dataset.done) { $('clear-stats').innerHTML = ''; $('clear-stats').dataset.done = ''; }
   setHidden($('lock-hint'), S.locked || S.editorOpen);
   setClass($('crosshair'), chCls);
@@ -1667,7 +1504,7 @@ window.__wm = {
   createRoom,
   joinByCode,
   get roomCode() { return $('room-code').textContent; },
-  summaryText,
+  summaryText: () => S.stats.text(),
   renderInfo() {
     const i = renderer.renderer.info;
     const c = { mesh: 0, sprite: 0, line: 0, inst: 0, shadow: 0 };

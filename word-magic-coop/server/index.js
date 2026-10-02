@@ -20,8 +20,8 @@ const MIME = {
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
 };
-// 혼자 해보기 모드는 판정 코드(game.js, physics.js)를 브라우저에서 불러온다. 서버 파일 중 이 둘만 제공한다.
-const SERVER_FILES_FOR_CLIENT = new Set(['game.js', 'physics.js']);
+// 혼자 해보기 모드는 판정 코드(game.js와 그 모듈들)를 브라우저에서 불러온다. 서버 파일 중 판정 코드만 제공한다(index.js는 빼고).
+const SERVER_FILES_FOR_CLIENT = new Set(fs.readdirSync(path.dirname(fileURLToPath(import.meta.url))).filter((f) => f.endsWith('.js') && f !== 'index.js'));
 const ROUTES = [
   ['/vendor/three/', path.join(ROOT, 'node_modules/three/build')],
   ['/shared/', path.join(ROOT, 'shared')],

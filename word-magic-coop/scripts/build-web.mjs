@@ -31,7 +31,6 @@ const copy = (rel) => {
 for (const dir of ['client', 'shared']) {
   for (const f of fs.readdirSync(path.join(ROOT, dir))) if (/\.(js|css)$/.test(f)) copy(`${dir}/${f}`);
 }
-copy('server/game.js');
-copy('server/physics.js');
+for (const f of fs.readdirSync(path.join(ROOT, 'server'))) if (f.endsWith('.js') && f !== 'index.js') copy(`server/${f}`); // 판정 코드(서버 프로그램 빼고)
 fs.writeFileSync(path.join(OUT, 'index.html'), page);
 console.log(`dist/web/ 생성 (three ${pkg.dependencies.three}, peerjs ${PEERJS_VERSION})`);

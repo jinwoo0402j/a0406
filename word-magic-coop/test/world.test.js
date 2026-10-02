@@ -309,3 +309,9 @@ test('얼음·김에서 거두는 단어도 한 판에 정한 수까지', () => 
   assert.equal(born(g, 'COLD').length, TUNING.sourceYields);
   assert.ok(g.body(ice.id) && ice.ext[0] < 0, '끌려온다');
 });
+
+test('모든 효과 단어에 시전 함수가 있다(새 단어를 더할 때 빠뜨리지 않게)', async () => {
+  const { CAST } = await import('../server/spells.js');
+  const { WORDS, KIND } = await import('../shared/words.js');
+  for (const w of Object.values(WORDS)) if (w.kind === KIND.EFFECT) assert.equal(typeof CAST[w.id], 'function', w.id);
+});

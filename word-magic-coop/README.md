@@ -171,7 +171,7 @@ npm start            # 호스트 실행 (기본 포트 8080, 바꾸려면 PORT=9
 
 ## 5. 규칙 구현 요약 (v0.3 + 제안안)
 
-**처리 흐름**(`server/game.js` → `onCast`)
+**처리 흐름**(`server/spells.js` → `onCast`)
 
 ```
 장착한 효과 확인 → 대상 모드가 이 효과에 정의되어 있는지 → 대기시간
@@ -252,7 +252,11 @@ npm start            # 호스트 실행 (기본 포트 8080, 바꾸려면 PORT=9
 word-magic-coop/
   server/
     index.js     호스트: 정적 파일 + WebSocket 방(2~6명) + 60Hz 시뮬레이션 루프
-    game.js      권한 게임 상태: 시전 판정, 토큰 소유, 복구, 클리어, 스냅숏
+    game.js      권한 게임 상태: 자리·토큰 장부, 입력 분배, 틱, 복구, 클리어, 스냅숏 (아래 모듈을 붙여 쓴다)
+    spells.js    효과 단어별 시전(CAST 표), 투사체·폭발·물 튀김·데우기
+    lift.js      <들기>: 지속형 시전, 같이 들기, 주변 들기
+    world.js     세계의 성질을 단어로: 부수기·뽑아내기·얼음·김·눈밭·섞기
+    tokens.js    단어 줍기·던지기·장착
     physics.js   회전 없는 AABB 물리 (입력/외부 속도 분리, 올라타기, 들어 올리기)
   shared/        서버·클라이언트 공용 (브라우저에서도 그대로 import)
     words.js     단어 10종 정의(효과 7 + 수식 3), 효과별 대상 모드, 사물 종류별 속성, 반응(섞기)
@@ -261,6 +265,10 @@ word-magic-coop/
     tuning.js    조절 수치
     geom.js      AABB·레이캐스트
   client/        브라우저 (three.js 렌더링, 입력, HUD, 가방, 스냅숏 보간, 내 캐릭터 예측 predict.js)
+    main.js      화면 흐름: 접속, 입력, 스냅숏 보간, HUD, 가방 창, 이벤트 표시
+    render.js    three.js 장면(지형·사물·효과), objects.js: 사물 종류별 3D 모양
+    preview.js   조준 미리보기(호스트와 같은 판정 함수)
+    stats.js     판 요약(플레이테스트 기록)
     inventory.js 마인크래프트식 가방: 칸 배치, 클릭 규칙, 손·수식 칸 → 서버 장착(loadout)
     look.js      동숲 느낌 그림: 툰 재질, 지면 휨 셰이더, 하늘·바다·나무·꽃, 동물 주민 캐릭터
     host.js      브라우저 안 호스트: 판정 코드를 이 탭에서 돌림 (혼자 해보기 / 방장)
@@ -273,6 +281,14 @@ word-magic-coop/
   scripts/lag-check.mjs  반응 지연 측정: 인위적 지연을 넣은 중계로 내 캐릭터 예측 끔/켬 비교
   scripts/shot-world.mjs 세계의 성질(바위·모닥불·눈밭·섞기) 화면 스크린숏
 ```
+
+**새 단어·사물을 더하는 곳**
+| 더할 것 | 고칠 곳 |
+| --- | --- |
+| 효과 단어 | `shared/words.js`(정의·대상 모드) → `server/spells.js`의 `CAST` 표 → `client/icons.js`의 `EFFECT_ICON` (빠뜨리면 테스트가 알려 줌) |
+| 수식 단어 | `shared/words.js` → `shared/tuning.js`의 `mods`(배율) |
+| 반응(섞기) | `shared/words.js`의 `REACTIONS` 한 줄 |
+| 사물 종류 | `shared/words.js`의 `KIND_TRAITS`(속성) → `shared/level.js`(배치) → `client/objects.js`(모양) |
 
 ## 8. 실제로 수행한 테스트
 

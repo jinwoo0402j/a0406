@@ -1,5 +1,5 @@
 // 서버 없이 링크로 바로 여는 "혼자 해보기" 페이지를 만든다 → dist/play.html
-// three.js는 CDN(jsdelivr)에서, 게임 코드(client/ shared/ server/game.js·physics.js)는 페이지 옆의 파일로 불러온다.
+// three.js는 CDN(jsdelivr)에서, 게임 코드(client/ shared/ server/의 판정 코드)는 페이지 옆의 파일로 불러온다.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,8 +32,7 @@ fs.writeFileSync(path.join(ROOT, 'dist/play.html'), out);
 export const PLAY_FILES = [
   ...fs.readdirSync(path.join(ROOT, 'client')).filter((f) => f.endsWith('.js')).map((f) => `client/${f}`),
   ...fs.readdirSync(path.join(ROOT, 'shared')).filter((f) => f.endsWith('.js')).map((f) => `shared/${f}`),
-  'server/game.js',
-  'server/physics.js',
+  ...fs.readdirSync(path.join(ROOT, 'server')).filter((f) => f.endsWith('.js') && f !== 'index.js').map((f) => `server/${f}`), // 판정 코드(서버 프로그램 index.js 빼고)
 ];
 fs.writeFileSync(path.join(ROOT, 'dist/play-files.json'), JSON.stringify(PLAY_FILES, null, 2));
 console.log(`dist/play.html (${out.length} bytes) + ${PLAY_FILES.length} files`);
