@@ -5,6 +5,7 @@
 // - 들린 물체(b.hold)는 중력 대신 목표 지점을 향한 스프링·감쇠로 움직인다(관성·넘침이 생긴다).
 //   들린 물체가 올라가면 위에 얹힌 물체를 함께 밀어 올린다.
 // - 제자리에 박힌 물체(b.fixed: 바위·모닥불·샘)는 움직이지 않고 지형처럼 막기만 한다.
+// - 현상(b.ghost: 김)은 아무것과도 부딪히지 않는다.
 
 import { boxOfBody, overlaps, overlapsOnAxes, EPS } from '../shared/geom.js';
 
@@ -56,7 +57,7 @@ export class Physics {
       }
     };
     for (const s of this.statics) consider(s, 'static', s.id);
-    for (const o of bodies) if (o !== b) consider(boxOfBody(o), 'body', o.id);
+    for (const o of bodies) if (o !== b && !o.ghost) consider(boxOfBody(o), 'body', o.id);
     b.pos[axis] += allowed;
     return { moved: allowed, hit };
   }
@@ -73,7 +74,7 @@ export class Physics {
     }
     allowed = Math.max(0, allowed);
     const above = bodies
-      .filter((o) => o !== b)
+      .filter((o) => o !== b && !o.ghost)
       .map((o) => ({ o, ob: boxOfBody(o) }))
       .filter(({ ob }) => !overlaps(box, ob) && overlapsOnAxes(box, ob, XZ) && ob.min[1] >= box.max[1] - EPS)
       .sort((p, q) => p.ob.min[1] - q.ob.min[1]);

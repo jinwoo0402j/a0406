@@ -30,7 +30,7 @@ const setWidth = (el, v) => setDom(el, 'width', v, (x) => { el.style.width = x; 
 const setHidden = (el, v) => setDom(el, 'hidden', v, (x) => { el.hidden = x; });
 const NAMES = {
   ...Object.fromEntries(SEAT_IDS.map((id) => [id, id])), rock: '돌', box1: '상자', box2: '무거운 상자', dummy: '허수아비', cargo: '짐',
-  boulder: '커다란 바위', campfire: '모닥불', well: '샘', ice1: '얼음', ice2: '얼음', ice3: '얼음',
+  boulder: '커다란 바위', campfire: '모닥불', well: '샘', ice1: '얼음', ice2: '얼음', ice3: '얼음', steam1: '김', steam2: '김',
 };
 const BODY_DEF = new Map(bodyDefs().map((d) => [d.id, d]));
 const SEAT_COLOR = Object.fromEntries(LEVEL.seats.map((s) => [s.id, s.color]));
@@ -218,7 +218,7 @@ function send(msg) {
 const pc = (id, cls = '') => chip(id, SEAT_COLOR[id], cls);
 const OBJ_ICON = {
   cargo: ['flag'], rock: ['rock'], box1: ['box'], box2: ['box', 'weight'], dummy: ['dummy'],
-  boulder: ['rock', 'big'], campfire: ['flame'], well: ['water'], ice1: ['snow'], ice2: ['snow'], ice3: ['snow'],
+  boulder: ['rock', 'big'], campfire: ['flame'], well: ['water'], ice1: ['snow'], ice2: ['snow'], ice3: ['snow'], steam1: ['steam'], steam2: ['steam'],
 };
 // 부서지며 작아진 바위는 스냅숏의 sc만큼 작다
 const halfOf = (id, v) => BODY_DEF.get(id).size.map((x) => (x / 2) * (v?.sc || 1));
@@ -720,7 +720,10 @@ function onEvent(e) {
       break;
     case 'melt':
       renderer.worldFx(e);
-      log(`${P(e.id)}${icon('steam')}`);
+      log(`${P(e.id)}${e.steam ? `${icon('arrow')}${icon('steam')}` : icon('water')}`);
+      break;
+    case 'steam': case 'vanish':
+      renderer.worldFx(e);
       break;
     case 'chip':
       renderer.worldFx(e);
@@ -1102,7 +1105,7 @@ function buildPreview(bodies, rig) {
   if (ew === 'PUSH' || ew === 'PULL' || ew === 'FIRE' || ew === 'STEAM') {
     const reach = modFactor(TUNING, mc, 'BIG', { PUSH: 'pushReach', PULL: 'pullReach', FIRE: 'fireReach', STEAM: 'steamReach' }[ew]);
     radius = TUNING.nearbyRadius * reach;
-    res = resolveTargets(S.mode, ew, world, S.me, aim, { range: TUNING.aimedMaxRange * reach, radius });
+    res = resolveTargets(S.mode, ew, world, S.me, aim, { range: TUNING.aimedMaxRange * reach, radius, ghosts: ew === 'PULL' });
   } else {
     const capacity = TUNING.liftCapacity * modFactor(TUNING, mc, 'STRONG', 'liftCapacity');
     if (S.mode === 'NEAR') {
@@ -1330,7 +1333,7 @@ $('editor').addEventListener('mousemove', (e) => {
 });
 
 // 단어 설명(마우스를 올리면): 이름 + 쓸 수 있는 대상 모드 그림(효과) 또는 늘려 주는 것(수식)
-const MOD_TIP = { BIG: ['near', 'fire', 'up'], STRONG: ['push', 'weight', 'boom'] };
+const MOD_TIP = { BIG: ['near', 'fire', 'up'], STRONG: ['push', 'weight', 'boom'], COLD: ['water', 'arrow', 'snow'] };
 function wordTip(word) {
   const w = WORDS[word];
   const what = w.kind === KIND.EFFECT
@@ -1444,7 +1447,7 @@ function updateHud(frame) {
       if (pv.heavy.has(id)) return `${P(id)}${icon('weight')}${icon('people')}`;
       // 세계의 성질: 당기면 뽑혀 나올 단어, 때리면 떨어질 단어를 미리 보여 준다
       const tr = traitsOf(BODY_DEF.get(id)?.kind);
-      if (pv.effect === 'PULL' && tr.source) return `${P(id)}${icon('arrow')}${W(tr.source)}`;
+      if (pv.effect === 'PULL' && tr.source && v?.st !== 0) return `${P(id)}${icon('arrow')}${W(tr.source)}`;
       if ((pv.effect === 'PUSH' || pv.effect === 'PULL') && tr.breakable) return `${P(id)}${icon('arrow')}${W('BIG')}`;
       if (v?.h?.length) return `${P(id)}${icon('people')}`;
       return P(id);
@@ -1520,7 +1523,7 @@ function predictSelf(view, interpMe, dt) {
   // 내가 (직접·간접으로) 들어 올린 것. 무거워 못 들고 붙잡기만 한 것(hv)은 제자리에 있으니 부딪히는 물체로 둔다
   const held = new Set(holdingChain(S.me).filter((id) => !view.get(id)?.hv));
   const colliders = [];
-  for (const [id, v] of view) if (id !== S.me && !held.has(id)) colliders.push({ id, pos: v.p, half: halfOf(id, v) });
+  for (const [id, v] of view) if (id !== S.me && !held.has(id) && !traitsOf(BODY_DEF.get(id).kind).ghost) colliders.push({ id, pos: v.p, half: halfOf(id, v) });
   predictor.rtt = S.rtt;
   const r = predictor.present(performance.now() / 1000, dt, {
     colliders,

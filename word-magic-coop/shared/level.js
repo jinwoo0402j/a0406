@@ -59,6 +59,9 @@ export const LEVEL = {
     { id: 'ice1', kind: 'ice', pos: [0, -50, 0], size: [0.9, 0.9, 0.9], mass: 1.2 },
     { id: 'ice2', kind: 'ice', pos: [0, -50, 0], size: [0.9, 0.9, 0.9], mass: 1.2 },
     { id: 'ice3', kind: 'ice', pos: [0, -50, 0], size: [0.9, 0.9, 0.9], mass: 1.2 },
+    // 김: 얼음이 녹거나 모닥불이 물에 꺼지면 잠깐 떠 있다. 부딪히지 않는다. <당기기>로 거두면 <수증기>
+    { id: 'steam1', kind: 'steamcloud', pos: [0, -50, 0], size: [1.2, 1, 1.2], mass: 0 },
+    { id: 'steam2', kind: 'steamcloud', pos: [0, -50, 0], size: [1.2, 1, 1.2], mass: 0 },
   ],
 
   // 환경 구역. 추운 곳(눈밭): 여기에 닿은 <물>은 얼음이 되고, 얼음은 여기서는 녹지 않는다.
@@ -68,7 +71,8 @@ export const LEVEL = {
 
   // 단어 토큰. seat가 있으면 그 자리 플레이어가 가지고 시작하고(접속한 자리만 생긴다),
   // pos가 있으면 월드에 놓여 있다. 대상 지정 단어는 없다(대상은 모드 버튼).
-  // 시작 효과: A·C·E <밀치기>, B·D·F <들기>. 월드: <당기기> 1, <들기> 1, <파이어볼> 1, <큰> 3, <세게> 2.
+  // 시작 효과: A·C·E <밀치기>, B·D·F <들기>. 월드: <당기기> 1, <들기> 1, <파이어볼> 1, <큰> 1, <세게> 2.
+  // <큰>은 바닥에 하나만 두고, 나머지는 커다란 바위를 부숴서 얻는다(세계의 성질을 단어로).
   tokens: [
     { id: 't1', word: 'PUSH', seat: 'A' },
     { id: 't2', word: 'LIFT', seat: 'B' },
@@ -78,8 +82,6 @@ export const LEVEL = {
     { id: 't6', word: 'LIFT', seat: 'F' },
     { id: 'w1', word: 'FIREBALL', pos: [-5, 0, 17] },
     { id: 'w2', word: 'BIG', pos: [4.6, 0, 17.1] },
-    { id: 'w3', word: 'BIG', pos: [5.5, 0, 17.8] },
-    { id: 'w4', word: 'BIG', pos: [5.4, 0, 16.4] },
     { id: 'w5', word: 'STRONG', pos: [-6.2, 0, 25.4] },
     { id: 'w6', word: 'STRONG', pos: [6.2, 0, 27.2] },
     { id: 'w7', word: 'PULL', pos: [0, 0, 9.5] }, // 출발 구역 가운데: 일찍 발견해 여러 용도로 써 본다

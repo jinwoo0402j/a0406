@@ -492,6 +492,19 @@ export class Renderer {
         tag.position.y = h / 2 + 0.45;
         group.add(tag);
         group.userData.tag = tag;
+      } else if (d.kind === 'steamcloud') {
+        // 김: 뭉게뭉게 반투명 구름(부딪히지 않음). <당기기>로 거두면 <수증기>
+        visual = new THREE.Group();
+        for (const [x, y, z, r] of [[0, 0, 0, 0.42], [0.32, -0.1, 0.1, 0.3], [-0.3, -0.05, -0.1, 0.32], [0.05, 0.28, -0.05, 0.28], [0, -0.2, 0.3, 0.26]]) {
+          const puff = new THREE.Mesh(new THREE.SphereGeometry(r, 14, 10), std('#ffffff', { transparent: true, opacity: 0.7, depthWrite: false }));
+          puff.position.set(x, y, z);
+          visual.add(puff);
+        }
+        group.userData.cloud = true;
+        const tag = iconPlate(['steam'], { bg: '#9fb4c4', round: true, height: 0.3, border: '#ffffff' });
+        tag.position.y = h / 2 + 0.45;
+        group.add(tag);
+        group.userData.tag = tag;
       } else if (d.kind === 'ice') {
         // 얼음 덩이: 반투명 하늘색 상자
         visual = new THREE.Mesh(new THREE.BoxGeometry(...d.size), std('#d6f2ff', { transparent: true, opacity: 0.85, emissive: '#bfe9ff', emissiveIntensity: 0.25 }));
@@ -536,7 +549,7 @@ export class Renderer {
         tag.position.y = h / 2 + 0.9;
         group.add(tag);
       }
-      visual.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+      visual.traverse((o) => { if (o.isMesh) { o.castShadow = d.kind !== 'steamcloud'; o.receiveShadow = true; } });
       group.add(visual);
 
       // 들려 있음 표시 고리
@@ -720,7 +733,10 @@ export class Renderer {
       this.puffs(e.pos, 6, { color: '#f4fbff', size: 0.6, spread: 0.4, rise: 0.4, life: 0.7 });
       this.poke(e.id, 'hit');
     } else if (e.k === 'melt') {
-      this.puffs(e.pos, 10, { color: '#ffffff', size: 0.7, spread: 0.4, rise: 1.8, life: 1 }); // 김이 오른다
+      if (e.steam) this.puffs(e.pos, 10, { color: '#ffffff', size: 0.7, spread: 0.4, rise: 1.8, life: 1 }); // 김이 오른다
+      else this.burst(e.pos, new THREE.Color('#9fe6ff'), 10, 1.4, 0.6, 0.5, 0.07); // 물이 되어 흩어진다
+    } else if (e.k === 'steam' || e.k === 'vanish') {
+      this.puffs(e.pos, 8, { color: '#ffffff', size: 0.6, spread: 0.4, rise: 1.2, life: 0.9 });
     } else if (e.k === 'chip' || e.k === 'shatter') {
       const big = e.k === 'shatter';
       const b = this.bodyViews.get(e.id);
@@ -874,6 +890,7 @@ export class Renderer {
         }
       }
       if (v.group.userData.pool) v.group.userData.pool.visible = !!s.st;
+      if (v.group.userData.cloud) { v.visual.rotation.y = t * 0.6; v.visual.position.y = Math.sin(t * 2) * 0.08; }
       if (v.group.userData.tag && v.def.kind !== 'player' && s.st !== undefined) v.group.userData.tag.material.opacity = s.st ? 1 : 0.35;
       // 그을림(아군 디버프): 색이 어두워지고 연기가 난다
       const scorched = s.d > 0;

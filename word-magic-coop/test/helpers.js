@@ -97,3 +97,8 @@ export function attach(g, pid, ids = null) {
   const mods = ids || g.tokens.filter((t) => t.owner === pid && WORDS[t.word].kind === KIND.MOD).map((t) => t.id);
   return g.handle(pid, { t: 'loadout', effect: g.players[pid].slots.effect, mods });
 }
+
+// 바닥에 놓던 <큰> 2개(w3·w4)를 예전 자리에 다시 놓는다. 지금 레벨은 <큰>을 1개만 두고 나머지는 바위에서 얻는다.
+export function addBig(g) {
+  for (const [id, pos] of [['w3', [5.5, 0, 17.8]], ['w4', [5.4, 0, 16.4]]]) g.tokens.push(g.makeToken({ id, word: 'BIG', pos }, null));
+}

@@ -37,7 +37,7 @@ export function modeUnsupported(effectId, mode) {
 }
 
 // 선택 결과: { selected: [{ type: 'body'|'static', id }], reason? }
-// opts.range: 조준 대상 최대 거리, opts.radius: 주변 반경
+// opts.range: 조준 대상 최대 거리, opts.radius: 주변 반경, opts.ghosts: 부딪히지 않는 현상(김)도 고른다(<당기기>로 거둘 때만)
 export function selectTargets(mode, world, casterId, aim, opts = {}, tuning = TUNING) {
   const range = opts.range ?? tuning.aimedMaxRange;
   const radius = opts.radius ?? tuning.nearbyRadius;
@@ -56,6 +56,7 @@ export function selectTargets(mode, world, casterId, aim, opts = {}, tuning = TU
     }
     for (const b of world.bodies) {
       if (b.id === casterId) continue; // 시전자 자신 제외
+      if (b.traits?.[TRAIT.GHOST] && !opts.ghosts) continue; // 김은 조준선을 막지 않는다
       const t = rayBox(aim.origin, dir, boxOfBody(b), tuning.aimRayLength);
       if (t !== null && (!best || t < best.t)) best = { t, type: 'body', id: b.id, ref: b };
     }
@@ -74,6 +75,7 @@ export function selectTargets(mode, world, casterId, aim, opts = {}, tuning = TU
     const selected = [];
     for (const b of world.bodies) {
       if (b.id === casterId) continue;
+      if (b.traits?.[TRAIT.GHOST] && !opts.ghosts) continue;
       if (dist(b.pos, caster.pos) > radius) continue;
       if (segmentBlocked(caster.pos, b.pos, world.statics)) continue;
       selected.push({ type: 'body', id: b.id });
@@ -97,8 +99,9 @@ export function applicability(effect, entity, casterId, opts = {}) {
   const tr = b.traits || {};
   // 밀치기·당기기: 움직이는 것은 움직이고, 부서지는 것(커다란 바위)은 깎이고, 당기기는 성질을 뽑아낸다(모닥불·샘)
   if (effect === 'PUSH' || effect === 'PULL') {
+    if (effect === 'PULL' && tr[TRAIT.SOURCE] && !b.empty) return null; // 성질을 뽑아낸다
     if (tr[TRAIT.MOVABLE] || tr[TRAIT.BREAKABLE]) return null;
-    if (effect === 'PULL' && tr[TRAIT.SOURCE]) return b.empty ? REASON.SOURCE_EMPTY : null;
+    if (effect === 'PULL' && tr[TRAIT.SOURCE]) return REASON.SOURCE_EMPTY;
     return REASON.NOT_MOVABLE;
   }
   if (effect === 'FIRE') return tr[TRAIT.HEATABLE] ? null : REASON.NOT_HEATABLE;

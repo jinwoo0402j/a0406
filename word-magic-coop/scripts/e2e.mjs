@@ -212,6 +212,8 @@ try {
     await sleep(300);
   };
   g.token('w1').owner = 'A'; g.token('w1').pos = null;
+  // 바닥의 <큰>은 1개뿐(나머지는 바위에서 얻는다) → 시험용으로 2개를 더 쥐여 준다
+  for (const id of ['w3', 'w4']) if (!g.token(id)) g.tokens.push(g.makeToken({ id, word: 'BIG' }, 'A'));
   for (const id of ['w2', 'w3', 'w4']) { g.token(id).owner = 'A'; g.token(id).pos = null; }
   await holdWord(A, 'FIREBALL');
   // [브라우저] 가방 창: 수식 묶음(큰×3)을 Shift+클릭하면 수식 칸으로, 결과에 주문이 보인다. 수식 칸을 Shift+클릭하면 가방으로

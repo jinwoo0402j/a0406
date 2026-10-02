@@ -219,3 +219,93 @@ test('들기로 바위·모닥불·샘은 들 수 없다', () => {
   run(g, 0.3);
   assert.equal(cast(g, 'B', 'boulder').reason, REASON.NOT_LIFTABLE);
 });
+
+test('생긴 현상 거두기: 얼음을 당기면 <차가운>(얼음은 녹음), 불에 녹은 얼음의 김을 당기면 <수증기>', () => {
+  const g = newGame();
+  place(g, 'A', [0, 0, 15]);
+  run(g, 0.3);
+  hold(g, 'A', 'PULL');
+  const ice = g.activate('ice', [2.5, 0, 15], 'A');
+  assert.ok(ice);
+  assert.ok(cast(g, 'A', ice.id).ok);
+  assert.equal(born(g, 'COLD').length, 1, '차가움을 뽑아낸다');
+  assert.equal(g.body(ice.id), undefined, '얼음은 녹는다');
+  assert.ok(!g.bodies.some((b) => b.kind === 'steamcloud'), '당겨서 녹이면 김은 안 난다');
+  // <불>로 녹이면 김이 피어오른다
+  run(g, CD);
+  const ice2 = g.activate('ice', [2.5, 0, 15], 'A');
+  hold(g, 'A', 'FIRE');
+  assert.ok(cast(g, 'A', ice2.id).ok);
+  const cloud = g.bodies.find((b) => b.kind === 'steamcloud');
+  assert.ok(cloud, '김이 생긴다');
+  // 김은 부딪히지 않는다: 걸어서 지나가고, 다른 마법의 조준선도 막지 않는다
+  run(g, CD);
+  hold(g, 'A', 'PUSH');
+  place(g, 'B', [cloud.pos[0] + 1.5, 0, 15]);
+  run(g, 0.2);
+  const r = cast(g, 'A', 'B');
+  assert.ok(r.ok && r.targets.includes('B'), '김 너머 친구를 민다');
+  // <당기기>로 거둔다
+  run(g, CD);
+  hold(g, 'A', 'PULL');
+  place(g, 'B', [0, 0, 18]);
+  run(g, 0.2);
+  assert.ok(cast(g, 'A', cloud.id).ok);
+  assert.equal(born(g, 'STEAM').length, 1);
+  assert.equal(g.body(cloud.id), undefined);
+});
+
+test('김은 잠깐 뒤 흩어지고, 물에 꺼진 모닥불에서도 피어오른다', () => {
+  const g = newGame();
+  place(g, 'A', [3, 0, 8.6]);
+  run(g, 0.3);
+  hold(g, 'A', 'WATER');
+  assert.ok(cast(g, 'A', 'campfire').ok);
+  run(g, 0.5);
+  const cloud = g.bodies.find((b) => b.kind === 'steamcloud');
+  assert.ok(cloud && cloud.pos[1] > 0.5, '모닥불 위에 김');
+  run(g, TUNING.steamLife);
+  assert.ok(!g.bodies.some((b) => b.kind === 'steamcloud'), '흩어졌다');
+});
+
+test('<차가운>을 붙인 <물>은 추운 곳이 아니어도 언다', () => {
+  const g = newGame();
+  place(g, 'A', [0, 0, 15]);
+  run(g, 0.3);
+  hold(g, 'A', 'WATER');
+  const c = give(g, 'A', 'COLD');
+  assert.ok(g.handle('A', { t: 'loadout', effect: g.players.A.slots.effect, mods: [c] }).ok);
+  const p = g.body('A').pos;
+  assert.ok(g.handle('A', { t: 'cast', mode: 'AIM', origin: [...p], dir: [0, -0.35, 1] }).ok);
+  run(g, 1);
+  const ice = g.bodies.find((b) => b.kind === 'ice');
+  assert.ok(ice && ice.pos[2] > 15 && ice.pos[2] < 20, '앞 바닥에 얼음');
+  run(g, TUNING.iceMelt + 0.2);
+  assert.equal(g.body(ice.id), undefined, '추운 곳 밖이라 곧 녹는다');
+});
+
+test('수식이 들어간 반응: <큰> + <불> → <파이어볼>, <수증기> + <차가운> → <물>', () => {
+  const g = newGame();
+  const r1 = g.handle('A', { t: 'react', tokens: [give(g, 'A', 'BIG'), give(g, 'A', 'FIRE')] });
+  assert.equal(r1.word, 'FIREBALL');
+  const r2 = g.handle('A', { t: 'react', tokens: [give(g, 'A', 'COLD'), give(g, 'A', 'STEAM')] });
+  assert.equal(r2.word, 'WATER');
+  assert.equal(reactionFor(['BIG', 'BIG', 'FIRE']), null, '개수가 다르면 반응 없음');
+});
+
+test('얼음·김에서 거두는 단어도 한 판에 정한 수까지', () => {
+  const g = newGame();
+  place(g, 'A', [0, 0, 15]);
+  run(g, 0.3);
+  hold(g, 'A', 'PULL');
+  for (let i = 0; i < TUNING.sourceYields; i++) {
+    const ice = g.activate('ice', [2.5, 0, 15], 'A');
+    assert.ok(cast(g, 'A', ice.id).ok);
+    run(g, CD);
+  }
+  // 더는 안 나오고, 얼음은 보통 물체처럼 끌려온다
+  const ice = g.activate('ice', [2.5, 0, 15], 'A');
+  assert.ok(cast(g, 'A', ice.id).ok);
+  assert.equal(born(g, 'COLD').length, TUNING.sourceYields);
+  assert.ok(g.body(ice.id) && ice.ext[0] < 0, '끌려온다');
+});

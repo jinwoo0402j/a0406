@@ -7,6 +7,7 @@
 //
 // 세계의 성질을 단어로(v0.5): 커다란 바위를 마법으로 부수면 <큰>이, 모닥불·샘에서 <당기기>로 뽑아내면 <불>·<물>이 나온다.
 // <물>은 추운 곳에서 얼음이 되고, <불>은 얼음을 녹이고 모닥불을 붙인다. 섞는 칸에서 <물> + <불> → <수증기>.
+// 생긴 현상도 거둔다: 얼음을 당기면 <차가운>(얼음은 녹는다), 불에 녹은 얼음·물에 꺼진 모닥불에서 피어오른 김을 당기면 <수증기>.
 
 import { LEVEL, SEAT_IDS, inZone } from '../shared/level.js';
 import { TUNING, modFactor } from '../shared/tuning.js';
@@ -50,7 +51,7 @@ export class Game {
     this.projectiles = [];
     this.nextProjectileId = 1;
     this.nextTokenId = 1; // 세계에서 새로 생긴 단어(부순 바위·뽑아낸 성질·반응)
-    this.nextIceAt = 0;
+    this.kindYields = {}; // 생겼다 사라지는 것(얼음·김)에서 이번 판에 거둔 단어 수(종류별)
     this.goal = { timer: 0, cleared: false, inside: {} };
     this.history = [];
     this.recordHistory();
@@ -179,6 +180,8 @@ export class Game {
       refillAt: 0,
       yields: 0, // 이번 판에 뽑아낸 단어 수
       warm: 0, // 얼음이 추운 곳 밖에 있던 시간
+      ghost: !!traitsOf(d.kind)[TRAIT.GHOST], // 부딪히지 않는 현상(김)
+      expireAt: 0,
       downUntil: 0,
       inVel: [0, 0],
       ext: [0, 0],
@@ -417,7 +420,7 @@ export class Game {
     const T = this.T;
     const reach = modFactor(T, mods, 'BIG', 'pullReach');
     const cap = T.pullMaxSpeed * modFactor(T, mods, 'STRONG', 'pullForce');
-    const res = resolveTargets(mode, 'PULL', this.targetingWorld(view), pid, aim, { range: T.aimedMaxRange * reach, radius: T.nearbyRadius * reach }, T);
+    const res = resolveTargets(mode, 'PULL', this.targetingWorld(view), pid, aim, { range: T.aimedMaxRange * reach, radius: T.nearbyRadius * reach, ghosts: true }, T);
     if (!res.applicable.length) return fail(res.reason);
     const caster = this.body(pid);
     // 남은 거리 d를 지면 마찰로 멈추며 지나가는 속도 √(2·마찰·d), 상한 cap
@@ -443,7 +446,8 @@ export class Game {
       for (const id of res.applicable) {
         const b = this.body(id);
         if (!b) continue;
-        if (b.traits[TRAIT.SOURCE]) { this.extract(b, pid); continue; } // 모닥불·샘: 성질을 단어로 뽑아낸다
+        // 모닥불·샘·얼음·김: 성질을 단어로 뽑아낸다. 다 뽑아낸 얼음은 보통 물체처럼 끌려온다
+        if (b.traits[TRAIT.SOURCE] && (this.extract(b, pid) || !b.traits[TRAIT.MOVABLE])) continue;
         if (b.traits[TRAIT.BREAKABLE]) { this.chip(b, T.boulderPushHit * force, pid); continue; }
         const d = [caster.pos[0] - b.pos[0], caster.pos[2] - b.pos[2]];
         const l = Math.hypot(d[0], d[1]);
@@ -472,6 +476,7 @@ export class Game {
       blast: water ? T.waterSplashRadius * modFactor(T, mods, 'BIG', 'waterRadius') : T.fireballBlastRadius * modFactor(T, mods, 'BIG', 'blastRadius'),
       damage: water ? 0 : T.fireballDamage * modFactor(T, mods, 'STRONG', 'fireballDamage'),
       push: water ? T.waterPush * modFactor(T, mods, 'STRONG', 'waterPush') : T.fireballKnockback,
+      cold: water && mods.COLD > 0, // <차가운> + <물>: 어디에 닿아도 언다
       life: water ? T.waterLife : T.fireballLife,
     };
     this.projectiles.push(proj);
@@ -496,7 +501,7 @@ export class Game {
     let t = T.aimPointRange;
     for (const s of this.statics) { const h = rayBox(aim.origin, aim.dir, s, t); if (h !== null && h < t) t = h; }
     for (const b of this.bodies) {
-      if (b.id === pid) continue;
+      if (b.id === pid || b.ghost) continue;
       const h = rayBox(aim.origin, aim.dir, boxOfBody(b), t);
       if (h !== null && h < t) t = h;
     }
@@ -561,7 +566,7 @@ export class Game {
     this.players[pid].cooldownUntil = this.time + this.T.castCooldown;
     this.emit({ k: 'cast', by: pid, effect: 'WATER', mode: 'SELF', mods, targets: [pid], washed });
     const feet = [caster.pos[0], bottomOf(caster) + 0.05, caster.pos[2]];
-    if (inZone(feet, 'cold', this.level)) this.freezeAt(feet, pid);
+    if (inZone(feet, 'cold', this.level) || mods.COLD > 0) this.freezeAt(feet, pid);
     return { ok: true, washed };
   }
 
@@ -587,7 +592,7 @@ export class Game {
   // 데우기(<불>·파이어볼 폭발 공통). 반환: 일어난 일 목록
   heat(b, dmg, by) {
     const effects = [];
-    if (b.kind === 'ice') { this.melt(b, by); effects.push('melt'); return effects; }
+    if (b.kind === 'ice') { this.melt(b, by, true); effects.push('melt'); return effects; }
     if (b.kind === 'campfire' && b.empty) {
       b.empty = false;
       b.refillAt = 0;
@@ -676,9 +681,15 @@ export class Game {
   }
 
   // 모닥불·샘이 다 쓰였나(비었거나 이번 판에 내줄 만큼 다 내줌)
+  // 생겼다 사라지는 것(얼음·김)은 하나하나가 아니라 종류별로 센다
   sourceSpent(b) {
     if (!b.traits?.[TRAIT.SOURCE]) return false;
+    if (this.isReserve(b)) return (this.kindYields[b.kind] || 0) >= this.T.sourceYields;
     return b.empty || b.yields >= this.T.sourceYields;
+  }
+
+  isReserve(b) {
+    return (this.level.reserve || []).some((d) => d.id === b.id);
   }
 
   // <당기기>로 성질을 뽑아낸다: 모닥불 → <불>(불이 꺼짐), 샘 → <물>(샘이 빔). 조금 지나면 다시 찬다.
@@ -687,26 +698,36 @@ export class Game {
     const word = b.traits[TRAIT.SOURCE];
     const top = [b.pos[0], b.pos[1] + b.half[1] + 0.3, b.pos[2]];
     const t = this.spawnWord(word, top, this.body(by)?.pos, 'extract');
+    this.emit({ k: 'extract', id: b.id, by, word, token: t.id });
+    if (this.isReserve(b)) {
+      // 얼음은 차가움을 빼앗겨 녹고, 김은 거둬져 사라진다
+      this.kindYields[b.kind] = (this.kindYields[b.kind] || 0) + 1;
+      if (b.kind === 'ice') this.melt(b, by);
+      else this.vanish(b);
+      return true;
+    }
     b.empty = true;
     b.yields += 1;
     b.refillAt = this.time + this.T.sourceRefill;
-    this.emit({ k: 'extract', id: b.id, by, word, token: t.id });
     return true;
   }
 
   // 마법으로 생기는 사물 꺼내기(얼음). 다 쓰고 있으면 가장 오래된 것을 녹여 다시 쓴다.
-  activate(kind, base, by) {
+  // free: 겹침·바닥을 따지지 않고 그 자리에 띄운다(김)
+  activate(kind, base, by, free = false) {
     const defs = (this.level.reserve || []).filter((d) => d.kind === kind);
     if (!defs.length) return null;
     let def = defs.find((d) => !this.body(d.id));
     if (!def) {
       const oldest = this.bodies.filter((b) => b.kind === kind).sort((a, c) => a.bornAt - c.bornAt)[0];
-      this.melt(oldest, by);
+      if (kind === 'ice') this.melt(oldest, by);
+      else this.vanish(oldest);
       def = defs.find((d) => d.id === oldest.id);
     }
     const b = this.makeBody({ ...def, pos: base });
     b.bornAt = this.time + this.tick * 1e-9;
     this.bodies.push(b);
+    if (free) { b.pos = [base[0], base[1] + b.half[1], base[2]]; return b; }
     if (!this.placeNear(b, base)) { this.bodies = this.bodies.filter((x) => x !== b); return null; }
     b.lastSafe = { ground: this.groundUnder([b.pos[0], bottomOf(b) + 0.01, b.pos[2]]) || b.lastSafe.ground, pos: [b.pos[0], bottomOf(b), b.pos[2]] };
     return b;
@@ -721,8 +742,25 @@ export class Game {
     return b;
   }
 
-  melt(b, by = null) {
-    this.emit({ k: 'melt', id: b.id, by, pos: b.pos.map(r3) });
+  // 얼음이 녹는다. 열(<불>·파이어볼)에 녹으면 그 자리에 김이 피어오른다
+  melt(b, by = null, steam = false) {
+    const pos = [...b.pos];
+    this.emit({ k: 'melt', id: b.id, by, pos: pos.map(r3), steam });
+    this.deactivate(b);
+    if (steam) this.puffSteam([pos[0], pos[1] - b.half[1] + 0.2, pos[2]], by);
+  }
+
+  // 김이 피어오른다(잠깐 떠 있다가 흩어진다). 그 안에 <당기기>로 거두면 <수증기>
+  puffSteam(base, by = null) {
+    const c = this.activate('steamcloud', base, by, true);
+    if (!c) return null;
+    c.expireAt = this.time + this.T.steamLife;
+    this.emit({ k: 'steam', id: c.id, by, pos: c.pos.map(r3) });
+    return c;
+  }
+
+  vanish(b) {
+    this.emit({ k: 'vanish', id: b.id, pos: b.pos.map(r3) });
     this.deactivate(b);
   }
 
@@ -738,7 +776,7 @@ export class Game {
   splash(pr, point, hit) {
     const hits = [];
     for (const b of [...this.bodies]) {
-      if (b.id === pr.owner) continue;
+      if (b.id === pr.owner || b.ghost) continue;
       const box = boxOfBody(b);
       const dx = Math.max(box.min[0] - point[0], 0, point[0] - box.max[0]);
       const dy = Math.max(box.min[1] - point[1], 0, point[1] - box.max[1]);
@@ -753,6 +791,7 @@ export class Game {
         b.empty = true;
         b.refillAt = this.time + this.T.sourceRefill;
         effects.push('douse');
+        this.puffSteam([b.pos[0], b.pos[1] + b.half[1] + 0.1, b.pos[2]], pr.owner); // 치익 — 김이 오른다
       }
       if (b.kind === 'well' && b.empty) { b.empty = false; b.refillAt = 0; effects.push('fill'); }
       if (b.traits[TRAIT.MOVABLE] && pr.push > 0) {
@@ -767,7 +806,7 @@ export class Game {
       if (effects.length) hits.push({ id: b.id, effects, direct });
     }
     this.emit({ k: 'splash', id: pr.id, by: pr.owner, pos: point.map(r3), radius: r3(pr.blast), hits });
-    if (inZone(point, 'cold', this.level)) this.freezeAt(point, pr.owner);
+    if (inZone(point, 'cold', this.level) || pr.cold) this.freezeAt(point, pr.owner);
   }
 
   // 섞기(가방의 섞는 칸): 가진 단어들의 종류·개수가 반응과 맞으면 그 단어들이 새 단어 하나가 된다.
@@ -799,6 +838,7 @@ export class Game {
         b.refillAt = 0;
         this.emit({ k: 'refill', id: b.id });
       }
+      if (b.kind === 'steamcloud' && this.time >= b.expireAt) { this.vanish(b); continue; }
       if (b.kind === 'ice') {
         b.warm = inZone(b.pos, 'cold', this.level) ? 0 : b.warm + dt;
         if (b.warm >= this.T.iceMelt) this.melt(b);
@@ -1160,7 +1200,7 @@ export class Game {
         if (t !== null && (!hit || t < hit.t)) hit = { t, type, id };
       };
       for (const s of this.statics) test(s, 'static', s.id);
-      for (const b of this.bodies) if (b.id !== pr.owner) test(boxOfBody(b), 'body', b.id);
+      for (const b of this.bodies) if (b.id !== pr.owner && !b.ghost) test(boxOfBody(b), 'body', b.id);
       if (hit) {
         const point = pr.pos.map((v, i) => v + dir[i] * hit.t);
         if (pr.word === 'WATER') this.splash(pr, point, hit);
@@ -1183,7 +1223,7 @@ export class Game {
     const T = this.T;
     const hits = [];
     for (const b of [...this.bodies]) {
-      if (b.id === pr.owner || !this.bodies.includes(b)) continue;
+      if (b.id === pr.owner || b.ghost || !this.bodies.includes(b)) continue;
       const box = boxOfBody(b);
       const dx = Math.max(box.min[0] - point[0], 0, point[0] - box.max[0]);
       const dy = Math.max(box.min[1] - point[1], 0, point[1] - box.max[1]);

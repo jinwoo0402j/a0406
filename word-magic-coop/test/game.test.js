@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TUNING } from '../shared/tuning.js';
 import { REASON } from '../shared/targeting.js';
-import { newGame, run, place, cast, grab, attach, lookAt, bottom, assertTokenInvariant, walkTo } from './helpers.js';
+import { newGame, run, place, cast, grab, attach, lookAt, bottom, assertTokenInvariant, walkTo, addBig } from './helpers.js';
 
 const CD = TUNING.castCooldown + 0.02;
 const angleOf = (c, p) => Math.atan2(p[0] - c[0], p[2] - c[2]);
@@ -181,6 +181,7 @@ test('T4: 들기 — 무게별 높이, 힘 부족, 시점 회전을 늦게 따�
 
 test('T5: <큰>은 0/1/3개에 따라 결과가 다르고, 가진 것보다 많이 붙이거나 넘긴 뒤 복제되지 않는다', () => {
   const g = newGame();
+  addBig(g);
   grab(g, 'A', 'w1');
   g.handle('A', { t: 'equip', slot: 'effect', token: 'w1' });
   for (const id of ['w2', 'w3', 'w4']) grab(g, 'A', id);
@@ -282,7 +283,7 @@ test('유지: 넘긴 <세게>로는 계속 강화할 수 없고(무거운 물체
   assert.deepEqual(g.body('box2').heldBy, [], '<들기>를 내려놓으면 놓친다');
   assert.ok(g.events.some((e) => e.k === 'liftEnd' && e.reason === 'word'));
   assert.equal(g.effectWord('B'), null);
-  assertTokenInvariant(assert, g, 10);
+  assertTokenInvariant(assert, g, 8);
 });
 
 test('유지: 낙하 복구·단어 복구·동시 줍기·재시작에서 소유권과 토큰 수 보존', () => {
@@ -291,7 +292,7 @@ test('유지: 낙하 복구·단어 복구·동시 줍기·재시작에서 소�
   const w1 = g.token('w1');
   assert.ok(w1.owner === 'A' || w1.owner === 'B', '둘이 동시에 닿아도 한 사람만 줍는다');
   assert.equal(g.events.filter((e) => e.k === 'pickup' && e.token === 'w1').length, 1);
-  assertTokenInvariant(assert, g, 10);
+  assertTokenInvariant(assert, g, 8);
   // 사람·짐이 떨어지면 같은 지면의 안전 지점으로
   place(g, 'B', [7.2, 0, 26]); place(g, 'A', [5.5, 0, 26]); run(g, 0.3);
   if (g.effectWord('A') !== 'PUSH') g.handle('A', { t: 'equip', slot: 'effect', token: 't1' });
@@ -314,7 +315,7 @@ test('유지: 낙하 복구·단어 복구·동시 줍기·재시작에서 소�
   assert.equal(g.projectiles.length, 0);
   assert.equal(g.body('dummy').hp, TUNING.dummyHp);
   assert.deepEqual(g.body('A').pos, [-1.5, 0.65, 1]);
-  assertTokenInvariant(assert, g, 10);
+  assertTokenInvariant(assert, g, 8);
 });
 
 test('클리어: 짐 + 접속한 모든 사람이 도착 구역에 2초 이상', () => {
@@ -381,5 +382,5 @@ test('실제 조작만으로 클리어: B가 A를 들어 올리고, <들기>를 
   run(g, 2.2);
   assert.ok(g.goal.inside.cargo && g.goal.inside.A && g.goal.inside.B, JSON.stringify(g.goal.inside) + ` cargo=${cargo.pos}`);
   assert.equal(g.goal.cleared, true);
-  assertTokenInvariant(assert, g, 10);
+  assertTokenInvariant(assert, g, 8);
 });

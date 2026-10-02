@@ -24,6 +24,8 @@ export const WORDS = {
   STEAM: { id: 'STEAM', label: '수증기', kind: KIND.EFFECT, cast: 'instant', modes: ['AIM', 'NEAR'] },
   BIG: { id: 'BIG', label: '큰', kind: KIND.MOD },
   STRONG: { id: 'STRONG', label: '세게', kind: KIND.MOD },
+  // <차가운>: 얼음에서 뽑아낸 차가움. 붙인 <물>은 어디에 닿아도 언다(추운 곳이 아니어도)
+  COLD: { id: 'COLD', label: '차가운', kind: KIND.MOD },
 };
 
 export const MOD_IDS = Object.values(WORDS).filter((w) => w.kind === KIND.MOD).map((w) => w.id);
@@ -32,10 +34,11 @@ export const MOD_IDS = Object.values(WORDS).filter((w) => w.kind === KIND.MOD).m
 //   fixed     — 제자리에 박혀 움직이지 않는다(바위·모닥불·샘)
 //   breakable — 마법으로 때리면 조금씩 부서지고, 부서질 때마다 성질 단어가 떨어진다(커다란 바위 → <큰>)
 //   heatable  — <불>이 통한다(그을림·피해·녹음·불붙음)
-//   source    — <당기기>로 성질을 단어로 뽑아낼 수 있다(모닥불 → <불>, 샘 → <물>)
+//   source    — <당기기>로 성질을 단어로 뽑아낼 수 있다(모닥불 → <불>, 샘 → <물>, 얼음 → <차가운>, 김 → <수증기>)
+//   ghost     — 부딪히지 않는 현상(김): 지나갈 수 있고 투사체도 뚫고 지나간다. 조준해서 <당기기>로 거둘 수는 있다
 export const TRAIT = {
   MOVABLE: 'movable', LIFTABLE: 'liftable', DAMAGEABLE: 'damageable',
-  FIXED: 'fixed', BREAKABLE: 'breakable', HEATABLE: 'heatable', SOURCE: 'source',
+  FIXED: 'fixed', BREAKABLE: 'breakable', HEATABLE: 'heatable', SOURCE: 'source', GHOST: 'ghost',
 };
 
 // 사물 종류별 속성(서버 판정과 클라이언트 미리보기가 같이 쓴다)
@@ -43,7 +46,8 @@ const MOVE = { movable: true, liftable: true };
 const KIND_TRAITS = {
   player: { ...MOVE, heatable: true },
   dummy: { ...MOVE, damageable: true, heatable: true },
-  ice: { ...MOVE, heatable: true },
+  ice: { ...MOVE, heatable: true, source: 'COLD' },
+  steamcloud: { fixed: true, ghost: true, source: 'STEAM' },
   boulder: { fixed: true, breakable: true },
   campfire: { fixed: true, heatable: true, source: 'FIRE' },
   well: { fixed: true, source: 'WATER' },
@@ -56,6 +60,8 @@ export function traitsOf(kind) {
 // 섞는 칸에 넣은 단어의 "종류와 개수"만 본다. 놓은 순서·자리는 상관없다(마인크래프트의 모양 없는 조합법).
 export const REACTIONS = [
   { id: 'steam', needs: { WATER: 1, FIRE: 1 }, makes: 'STEAM' }, // 물 + 불 → 수증기
+  { id: 'fireball', needs: { FIRE: 1, BIG: 1 }, makes: 'FIREBALL' }, // 큰 + 불 → 파이어볼(큰 불덩이)
+  { id: 'condense', needs: { STEAM: 1, COLD: 1 }, makes: 'WATER' }, // 수증기가 식으면 → 물
 ];
 
 export function wordCounts(words) {

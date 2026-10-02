@@ -87,6 +87,25 @@ await A.evaluate(() => { window.__wm.setCamera('third'); window.__wm.setView(0.4
 await sleep(500);
 await A.screenshot({ path: `${OUT}/w5-snow-ice.png` });
 
+// 4-2) <불>로 얼음을 녹이면 김 → <당기기>로 겨누면 <수증기>가 나올 것이 보인다
+const fid = give('FIRE');
+await holdWord('FIRE');
+const ice = g.bodies.find((b) => b.kind === 'ice');
+place('A', [ice.pos[0] + 2.2, 0, ice.pos[2] - 1.2]);
+await sleep(600);
+await A.evaluate((id) => { window.__wm.setCamera('first'); window.__wm.aimAt(id); }, ice.id);
+await sleep(300);
+await A.evaluate(() => window.__wm.cast());
+await sleep(500);
+await holdWord('PULL');
+const cloud = g.bodies.find((b) => b.kind === 'steamcloud');
+if (cloud) await A.evaluate((id) => window.__wm.aimAt(id), cloud.id);
+await sleep(500);
+await A.screenshot({ path: `${OUT}/w5b-steam-cloud.png` });
+await A.evaluate(() => window.__wm.cast());
+await sleep(1500);
+console.log('fire', fid, 'cloud', !!cloud);
+
 // 5) 가방의 섞는 칸: <불> + <물> → <수증기>
 give('WATER');
 await sleep(400);

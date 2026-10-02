@@ -93,5 +93,5 @@ export function chip(id, color, cls = '') {
   return `<span class="pc ${esc(cls)}" style="--c:${esc(color)}">${esc(id)}</span>`;
 }
 
-export const EFFECT_ICON = { PUSH: 'push', PULL: 'pull', LIFT: 'lift', FIREBALL: 'fire', WATER: 'water', FIRE: 'flame', STEAM: 'steam', BIG: 'big', STRONG: 'strong' };
+export const EFFECT_ICON = { PUSH: 'push', PULL: 'pull', LIFT: 'lift', FIREBALL: 'fire', WATER: 'water', FIRE: 'flame', STEAM: 'steam', BIG: 'big', STRONG: 'strong', COLD: 'snow' };
 export const MODE_ICON = { AIM: 'aim', SELF: 'self', NEAR: 'near' };

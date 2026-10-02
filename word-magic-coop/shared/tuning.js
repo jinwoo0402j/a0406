@@ -83,6 +83,7 @@ export const TUNING = {
   sourceYields: 3, // 모닥불·샘 하나가 한 판에 내주는 단어 수(단어가 끝없이 늘지 않게)
   dropToss: 3, // 떨어진 단어가 시전자 쪽으로 튀어 오는 속도 m/s
   iceMelt: 12, // 추운 곳 밖으로 나간 얼음이 녹는 시간 s
+  steamLife: 8, // 얼음이 녹거나 모닥불이 물에 꺼질 때 생긴 김이 남아 있는 시간 s (그 안에 <당기기>로 거두면 <수증기>)
 
   // 수식 단어 중첩 [임시: 곱 연산, 중첩당 배율, 최대 중첩 수]
   maxModStacks: 5,
@@ -92,6 +93,8 @@ export const TUNING = {
     BIG: { fireballRadius: 1.35, blastRadius: 1.35, pushReach: 1.2, pullReach: 1.2, liftReach: 1.2, waterRadius: 1.35, fireReach: 1.2, steamReach: 1.2 },
     // <세게>: 힘·위력 계열
     STRONG: { pushForce: 1.3, pullForce: 1.3, liftCapacity: 1.4, fireballDamage: 1.5, waterPush: 1.3, fireDamage: 1.5, steamLift: 1.12 },
+    // <차가운>: 수치가 아니라 동작을 바꾼다 — 붙인 <물>은 어디서나 언다(game.js)
+    COLD: {},
   },
 
   // 아군 명중 [제안안 디버프: 그을림 — 2초 느려짐. 체력 감소 없음. 다시 맞으면 쌓이지 않고 2초로 갱신]

@@ -180,7 +180,7 @@ test('<당기기>: 대상을 내 앞까지 끌어오고(지나치지 않음), �
   place(g, 'B', [2, 0, 9]); run(g, 0.3);
   g.handle('B', { t: 'release' });
   assert.equal(cast(g, 'A', 'B').reason, REASON.PROTECTED);
-  assertTokenInvariant(assert, g, 10);
+  assertTokenInvariant(assert, g, 8);
 });
 
 test('고리로 들 수 없다: B가 D를, D가 F를 들고 있으면 F는 B를 못 든다(끝없이 올라가는 것 방지)', () => {
