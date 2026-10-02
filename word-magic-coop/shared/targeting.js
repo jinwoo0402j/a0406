@@ -3,7 +3,7 @@
 //
 // world 형태:
 //   statics: [{ id, min, max }]                    — 정적 지형(속성 없음)
-//   bodies:  [{ id, kind, pos(중심), half, mass, traits, immune(bool), heldBy: [드는 사람], holding: [드는 물체] }]
+//   bodies:  [{ id, kind, pos(중심), half, mass, traits, immune(bool), heldBy: [드는 사람], holding: [드는 물체], empty(성질을 뽑아내 비었음) }]
 
 import { TUNING } from './tuning.js';
 import { TRAIT, WORDS, MODE_LABEL } from './words.js';
@@ -27,6 +27,9 @@ export const REASON = {
   BAD_AIM: '조준 정보가 올바르지 않아요',
   NOT_PLAYING: '게임이 진행 중이 아니에요',
   SUSTAINING: '유지 중인 마법이 있어요 · 시전 종료로 먼저 끝내세요',
+  NOT_HEATABLE: '<불>이 통하지 않는 대상이에요',
+  SOURCE_EMPTY: '지금은 뽑아낼 게 없어요 · 조금 기다리거나 다시 채워요',
+  BAD_MIX: '이 단어들은 반응하지 않아요',
 };
 
 export function modeUnsupported(effectId, mode) {
@@ -91,7 +94,15 @@ export function applicability(effect, entity, casterId, opts = {}) {
   const b = entity.body;
   // 보호 상태는 "다른 플레이어가 거는" 마법만 막는다. 자기 시전은 구분한다.
   if (b.kind === 'player' && b.id !== casterId && b.immune) return REASON.PROTECTED;
-  if (effect === 'PUSH' || effect === 'PULL') return b.traits?.[TRAIT.MOVABLE] ? null : REASON.NOT_MOVABLE;
+  const tr = b.traits || {};
+  // 밀치기·당기기: 움직이는 것은 움직이고, 부서지는 것(커다란 바위)은 깎이고, 당기기는 성질을 뽑아낸다(모닥불·샘)
+  if (effect === 'PUSH' || effect === 'PULL') {
+    if (tr[TRAIT.MOVABLE] || tr[TRAIT.BREAKABLE]) return null;
+    if (effect === 'PULL' && tr[TRAIT.SOURCE]) return b.empty ? REASON.SOURCE_EMPTY : null;
+    return REASON.NOT_MOVABLE;
+  }
+  if (effect === 'FIRE') return tr[TRAIT.HEATABLE] ? null : REASON.NOT_HEATABLE;
+  if (effect === 'STEAM') return tr[TRAIT.MOVABLE] ? null : REASON.NOT_MOVABLE;
   if (effect === 'LIFT') {
     if (!b.traits?.[TRAIT.LIFTABLE]) return REASON.NOT_LIFTABLE;
     const holders = b.heldBy || [];

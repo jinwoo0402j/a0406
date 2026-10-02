@@ -62,12 +62,36 @@ export const TUNING = {
   liftNearHeight: 1.6, // 주변 모드: 시전자 발밑 기준 띄우는 높이(무게 상한이 더 낮으면 그쪽) [제안안]
   // 같이 들기: 한 물체의 무게를 드는 사람 수로 똑같이 나눈다. 각자 나눠 든 무게의 합이 자기 힘을 넘으면 놓친다 [제안안]
 
+  // <물> — 투사체. 맞은 곳에 물이 튄다: 살짝 밀고 그을림을 씻고, 모닥불을 끄고, 추운 곳이면 얼음이 된다 [제안안·임시 수치]
+  waterSpeed: 12,
+  waterRadius: 0.2,
+  waterLife: 2,
+  waterSplashRadius: 0.8, // 튀는 범위
+  waterPush: 2, // 튄 물에 밀리는 속도 m/s
+
+  // <불> — 즉시. 대상을 데운다: 적 피해, 친구 그을림, 얼음 녹이기, 꺼진 모닥불 붙이기 [제안안·임시 수치]
+  fireDamage: 15,
+
+  // <수증기> — 즉시. 뜨거운 김이 솟아 대상을 위로 띄운다(약 1.2m) [제안안·임시 수치]
+  steamLift: 7,
+
+  // 세계의 성질을 단어로(v0.5) [제안안·임시 수치]
+  boulderHp: 90, // 커다란 바위: 이만큼 맞으면 다 부서진다. 3단계로 작아지며 단계마다 <큰>이 떨어진다
+  boulderStages: 3,
+  boulderPushHit: 10, // 밀치기·당기기 한 번에 깎이는 양(<세게>로 늘어남). 파이어볼은 피해만큼
+  sourceRefill: 20, // 성질을 뽑아낸 모닥불·샘이 다시 차는 시간 s
+  sourceYields: 3, // 모닥불·샘 하나가 한 판에 내주는 단어 수(단어가 끝없이 늘지 않게)
+  dropToss: 3, // 떨어진 단어가 시전자 쪽으로 튀어 오는 속도 m/s
+  iceMelt: 12, // 추운 곳 밖으로 나간 얼음이 녹는 시간 s
+
   // 수식 단어 중첩 [임시: 곱 연산, 중첩당 배율, 최대 중첩 수]
   maxModStacks: 5,
   modSlots: 5, // 가방 창의 수식 칸 수(마크의 갑옷 칸처럼 한 칸에 하나) [임시]
   mods: {
-    BIG: { fireballRadius: 1.35, blastRadius: 1.35, pushReach: 1.2, pullReach: 1.2, liftReach: 1.2 }, // <큰>: 크기·범위 계열
-    STRONG: { pushForce: 1.3, pullForce: 1.3, liftCapacity: 1.4, fireballDamage: 1.5 }, // <세게>: 힘·위력 계열
+    // <큰>: 크기·범위 계열
+    BIG: { fireballRadius: 1.35, blastRadius: 1.35, pushReach: 1.2, pullReach: 1.2, liftReach: 1.2, waterRadius: 1.35, fireReach: 1.2, steamReach: 1.2 },
+    // <세게>: 힘·위력 계열
+    STRONG: { pushForce: 1.3, pullForce: 1.3, liftCapacity: 1.4, fireballDamage: 1.5, waterPush: 1.3, fireDamage: 1.5, steamLift: 1.12 },
   },
 
   // 아군 명중 [제안안 디버프: 그을림 — 2초 느려짐. 체력 감소 없음. 다시 맞으면 쌓이지 않고 2초로 갱신]

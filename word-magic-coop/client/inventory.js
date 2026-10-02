@@ -2,12 +2,15 @@
 // - 가방 27칸 + 핫바 9칸(칸 번호 0~8이 핫바). 효과 단어는 한 칸에 하나, 수식 단어는 같은 단어끼리 한 칸에 겹친다.
 // - 위쪽 주문 칸: [손] = 선택한 핫바 칸의 효과 단어, [수식 칸 5개] = 주문에 붙일 수식(갑옷 칸처럼 한 칸에 하나).
 // - 주운 단어는 같은 묶음 → 핫바 빈칸 → 가방 빈칸 순서로 들어간다. 수식은 자동으로 붙지 않는다.
-// 칸 배치는 이 화면(본인)만의 것이다. 서버에는 "손에 든 효과 + 수식 칸 단어들"(loadout)과 던지기만 보낸다.
+// - 섞는 칸 4개(마인크래프트의 2×2 제작 칸처럼): 아무 단어나 한 칸에 하나. 놓은 순서와 상관없이 종류·개수가
+//   반응과 맞으면 결과 칸에 새 단어가 보이고, 결과를 누르면 재료 단어들이 그 단어 하나가 된다(서버의 react).
+// 칸 배치는 이 화면(본인)만의 것이다. 서버에는 "손에 든 효과 + 수식 칸 단어들"(loadout)과 던지기·섞기만 보낸다.
 
-import { WORDS, KIND } from '../shared/words.js';
+import { WORDS, KIND, reactionFor } from '../shared/words.js';
 
 export const HOTBAR = 9;
 export const MAIN = 27;
+export const MIX = 4;
 
 const isMod = (w) => WORDS[w]?.kind === KIND.MOD;
 const isEffect = (w) => WORDS[w]?.kind === KIND.EFFECT;
@@ -21,6 +24,7 @@ export class Inventory {
     this.sel = 0; // 선택한 핫바 칸(손)
     this.cursor = null; // 마우스에 든 단어 묶음 { word, tokens }
     this.mods = []; // 수식 칸(앞에서부터 채움)
+    this.mix = []; // 섞는 칸(앞에서부터 채움, 이 화면에만 있다)
     this.pendingMods = null; // 서버 반영을 기다리는 수식 칸 { mods, until }
     this.hidden = new Map(); // 던져서 서버 반영을 기다리는 단어 id → until
     this.lastSent = '';
@@ -35,7 +39,8 @@ export class Inventory {
     for (const [id, until] of this.hidden) if (!owned.has(id) || now > until) this.hidden.delete(id);
     if (this.pendingMods && (now > this.pendingMods.until || sameList(ps.m, this.pendingMods.mods))) this.pendingMods = null;
     this.mods = (this.pendingMods ? this.pendingMods.mods : ps.m).filter((id) => owned.has(id) && isMod(word(id)));
-    const inMods = new Set(this.mods);
+    this.mix = this.mix.filter((id) => owned.has(id) && !this.hidden.has(id));
+    const inMods = new Set([...this.mods, ...this.mix]);
     const keep = (id) => owned.has(id) && !inMods.has(id) && !this.hidden.has(id);
     for (let i = 0; i < this.slots.length; i++) {
       const s = this.slots[i];
@@ -212,6 +217,51 @@ export class Inventory {
     this.setMods(this.mods.map((x) => (x === id ? c.tokens[0] : x)), now);
     this.cursor = { word: w, tokens: [id] };
     return true;
+  }
+
+  // 섞는 칸 j: 아무 단어나 한 칸에 하나
+  clickMix(j, button, shift) {
+    const id = this.mix[j];
+    const c = this.cursor;
+    if (!c) {
+      if (!id) return false;
+      const w = this.wordOf(id);
+      this.mix = this.mix.filter((x) => x !== id);
+      if (shift) this.add(id, w);
+      else this.cursor = { word: w, tokens: [id] };
+      return true;
+    }
+    if (!id) {
+      if (this.mix.length >= MIX) return 'reject';
+      this.mix.push(c.tokens.pop());
+      if (!c.tokens.length) this.cursor = null;
+      return true;
+    }
+    if (c.tokens.length !== 1) return 'reject';
+    const w = this.wordOf(id);
+    this.mix = this.mix.map((x) => (x === id ? c.tokens[0] : x));
+    this.cursor = { word: w, tokens: [id] };
+    return true;
+  }
+
+  // 섞는 칸의 단어들로 생길 반응(없으면 null). 순서는 보지 않는다.
+  mixReaction() {
+    return this.mix.length ? reactionFor(this.mix.map((id) => this.wordOf(id))) : null;
+  }
+
+  // 결과를 누름: 재료 단어 id들을 꺼내 서버 반영 전까지 숨긴다
+  takeMix(now) {
+    const ids = this.mix;
+    this.mix = [];
+    for (const id of ids) this.hidden.set(id, now + 1.5);
+    return ids;
+  }
+
+  // 창을 닫을 때 섞는 칸의 단어는 가방으로 돌려놓는다(마인크래프트 제작 칸처럼)
+  returnMix() {
+    const ids = this.mix;
+    this.mix = [];
+    for (const id of ids) this.add(id, this.wordOf(id));
   }
 
   // 손 칸: 선택한 핫바 칸과 같은 칸. 효과 단어만 들어간다.

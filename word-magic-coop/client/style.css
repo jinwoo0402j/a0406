@@ -175,6 +175,10 @@ button.danger { background: #f6a48f; box-shadow: 0 4px 0 #d9826d; }
 .mc-label { font-size: 12px; color: var(--muted); }
 .mc-row { display: flex; gap: 4px; }
 .mc-op { font-size: 26px; color: var(--muted); padding-bottom: 10px; }
+.mc-mix { padding: 6px 12px; }
+.mc-slot.out { background: var(--yellow); box-shadow: 0 4px 0 var(--yellow-dark); cursor: pointer; }
+.mc-slot.out.ready { animation: mixglow 0.9s ease-in-out infinite alternate; }
+@keyframes mixglow { from { transform: scale(1); } to { transform: scale(1.08); } }
 .mc-result { min-height: 52px; box-sizing: border-box; padding: 6px 16px; background: var(--yellow); color: var(--ink); font-size: 17px; display: flex; align-items: center; border-radius: 999px; box-shadow: 0 4px 0 var(--yellow-dark); }
 .mc-grid { display: grid; grid-template-columns: repeat(9, 52px); gap: 4px; width: max-content; margin: 0 auto; }
 .mc-hotrow { margin-top: 12px; padding-top: 12px; border-top: 3px dotted var(--line); }

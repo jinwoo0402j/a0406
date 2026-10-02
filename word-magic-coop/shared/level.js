@@ -45,6 +45,25 @@ export const LEVEL = {
     { id: 'box2', kind: 'heavy', pos: [2.4, 0, 18.4], size: [0.9, 0.9, 0.9], mass: 3.6 },
     { id: 'dummy', kind: 'dummy', pos: [-2.6, 0, 19.6], size: [0.7, 1.5, 0.7], mass: 1.4 },
     { id: 'cargo', kind: 'cargo', pos: [0, 0, 26], size: [1, 1, 1], mass: 2.6 },
+    // 세계의 성질을 단어로(v0.5). 모두 제자리에 박혀 있다(fixed).
+    // 커다란 바위: 밀치기·당기기·파이어볼로 조금씩 부수면 작아지면서 <큰>이 떨어진다.
+    { id: 'boulder', kind: 'boulder', pos: [-5.4, 0, 8.6], size: [1.8, 1.6, 1.8], mass: 50 },
+    // 모닥불: <당기기>로 불을 뽑아내면 <불>이 나온다(불은 꺼진다). <불>로 다시 붙일 수 있다.
+    { id: 'campfire', kind: 'campfire', pos: [5.4, 0, 8.6], size: [0.9, 0.5, 0.9], mass: 50 },
+    // 샘: <당기기>로 물을 길어 올리면 <물>이 나온다(샘이 빈다). 조금 지나면 다시 찬다.
+    { id: 'well', kind: 'well', pos: [-6.3, 0, 21], size: [1, 0.7, 1], mass: 50 },
+  ],
+
+  // 처음엔 없고 마법으로 생기는 사물(같은 것을 다시 쓴다). 추운 곳에 <물>을 쏘면 얼음 덩이가 생긴다.
+  reserve: [
+    { id: 'ice1', kind: 'ice', pos: [0, -50, 0], size: [0.9, 0.9, 0.9], mass: 1.2 },
+    { id: 'ice2', kind: 'ice', pos: [0, -50, 0], size: [0.9, 0.9, 0.9], mass: 1.2 },
+    { id: 'ice3', kind: 'ice', pos: [0, -50, 0], size: [0.9, 0.9, 0.9], mass: 1.2 },
+  ],
+
+  // 환경 구역. 추운 곳(눈밭): 여기에 닿은 <물>은 얼음이 되고, 얼음은 여기서는 녹지 않는다.
+  zones: [
+    { id: 'snow', kind: 'cold', min: [-8, -1, 24], max: [-3, 4, 29] },
   ],
 
   // 단어 토큰. seat가 있으면 그 자리 플레이어가 가지고 시작하고(접속한 자리만 생긴다),
@@ -89,6 +108,12 @@ export const LEVEL = {
   ],
 };
 
+// 점 p가 그 종류의 환경 구역 안인가
+export function inZone(p, kind, level = LEVEL) {
+  return (level.zones || []).some((z) => z.kind === kind
+    && p[0] >= z.min[0] && p[0] <= z.max[0] && p[1] >= z.min[1] && p[1] <= z.max[1] && p[2] >= z.min[2] && p[2] <= z.max[2]);
+}
+
 export const SEAT_IDS = LEVEL.seats.map((s) => s.id);
 export const MAX_PLAYERS = SEAT_IDS.length;
 
@@ -97,5 +122,6 @@ export function bodyDefs(level = LEVEL) {
   return [
     ...level.seats.map((s) => ({ id: s.id, kind: 'player', pos: s.spawn, size: level.playerSize, color: s.color, mass: level.playerMass })),
     ...level.bodies,
+    ...(level.reserve || []),
   ];
 }

@@ -9,7 +9,7 @@ import {
   skyDome, cloud, water, stepWater, roundTree, palmTree, bush, flowers, villager, giftBox, mergeStatic, firstHands,
 } from './look.js';
 
-const ACTION_COLOR = { PUSH: '#ff9f6e', PULL: '#45c2ad', LIFT: '#6fd3ff', FIREBALL: '#ff7a3d' };
+const ACTION_COLOR = { PUSH: '#ff9f6e', PULL: '#45c2ad', LIFT: '#6fd3ff', FIREBALL: '#ff7a3d', WATER: '#5fb8ff', FIRE: '#ff6a3d', STEAM: '#eef4f8' };
 const KIND_COLOR = { effect: '#ff9f6e', mod: '#a98bff' }; // 효과 단어 / 수식 단어(HUD와 같은 색)
 const SCORCH = new THREE.Color('#4a3a32');
 const WATER_Y = -1.0;
@@ -282,6 +282,7 @@ export class Renderer {
       m.castShadow = !s.ground;
       this.scene.add(m);
     }
+    this.buildSnow();
     this.buildIsland();
     this.scene.add(mergeStatic(this.deco));
     // 도착 구역
@@ -362,6 +363,30 @@ export class Renderer {
     deco.add(flowers(spots));
   }
 
+  // 추운 곳(눈밭): 바닥에 눈 덮개 + 눈 더미. 여기에 닿은 물은 얼음이 된다
+  buildSnow() {
+    let r = 7;
+    const rnd = () => { r = (r * 16807) % 2147483647; return (r - 1) / 2147483646; };
+    for (const z of LEVEL.zones || []) {
+      if (z.kind !== 'cold') continue;
+      const w = z.max[0] - z.min[0];
+      const d = z.max[2] - z.min[2];
+      const snow = new THREE.Mesh(new THREE.BoxGeometry(w, 0.04, d), toon('#f7fbff'));
+      snow.position.set((z.min[0] + z.max[0]) / 2, 0.02, (z.min[2] + z.max[2]) / 2);
+      snow.receiveShadow = true;
+      this.scene.add(snow);
+      for (let i = 0; i < 9; i++) {
+        const lump = new THREE.Mesh(new THREE.SphereGeometry(0.25 + rnd() * 0.25, 10, 8), toonShared('#ffffff'));
+        lump.scale.y = 0.45;
+        lump.position.set(z.min[0] + 0.3 + rnd() * (w - 0.6), 0.04, z.min[2] + 0.3 + rnd() * (d - 0.6));
+        this.deco.add(lump);
+      }
+      const tag = iconPlate(['snow'], { bg: '#8fc6ee', round: true, height: 0.5, border: '#ffffff' }); // 추운 곳
+      tag.position.set((z.min[0] + z.max[0]) / 2, 1.6, z.min[2] + 0.3);
+      this.scene.add(tag);
+    }
+  }
+
   buildBodies() {
     for (const d of bodyDefs()) {
       const group = new THREE.Group();
@@ -407,6 +432,69 @@ export class Renderer {
         const tag = iconPlate(['weight'], { bg: '#7d859a', round: true, height: 0.34, border: '#ffffff' }); // 무거운 상자
         tag.position.y = h / 2 + 0.35;
         group.add(tag);
+      } else if (d.kind === 'boulder') {
+        // 커다란 바위: 울퉁불퉁한 큰 돌. 부서지며 작아진다(스냅숏의 sc)
+        visual = new THREE.Group();
+        const main = new THREE.Mesh(new THREE.IcosahedronGeometry(0.5, 1), std('#a9a4b6', { flatShading: true }));
+        main.scale.set(d.size[0] * 1.05, d.size[1] * 1.05, d.size[2] * 1.05);
+        visual.add(main);
+        for (const [x, y, z, k] of [[0.5, -0.35, 0.4, 0.45], [-0.55, -0.4, -0.2, 0.4], [0.1, 0.45, -0.3, 0.35]]) {
+          const lump = new THREE.Mesh(new THREE.IcosahedronGeometry(k, 0), std('#bdb8c9', { flatShading: true }));
+          lump.position.set(x * d.size[0] * 0.6, y * d.size[1] * 0.6, z * d.size[2] * 0.6);
+          visual.add(lump);
+        }
+        const tag = iconPlate(['big'], { bg: '#a98bff', round: true, height: 0.36, border: '#ffffff' }); // 이 바위에서 <큰>이 나온다
+        tag.position.y = h / 2 + 0.45;
+        group.add(tag);
+        group.userData.tag = tag;
+      } else if (d.kind === 'campfire') {
+        // 모닥불: 통나무 + 불꽃(꺼지면 불꽃이 사라진다)
+        visual = new THREE.Group();
+        for (let i = 0; i < 4; i++) {
+          const log = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.8, 8), std('#9a6a3e'));
+          log.rotation.z = Math.PI / 2;
+          log.rotation.y = (i / 4) * Math.PI;
+          log.position.y = -h / 2 + 0.1;
+          visual.add(log);
+        }
+        for (let i = 0; i < 7; i++) {
+          const st = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), std('#c9c3b6'));
+          const a = (i / 7) * Math.PI * 2;
+          st.position.set(Math.cos(a) * 0.42, -h / 2 + 0.05, Math.sin(a) * 0.42);
+          visual.add(st);
+        }
+        const flame = new THREE.Group();
+        const outer = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.6, 10), toon('#ff8a3d', { emissive: '#ff6a00', emissiveIntensity: 0.6 }));
+        const inner = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.38, 10), toon('#ffe27a', { emissive: '#ffb347', emissiveIntensity: 0.8 }));
+        outer.position.y = 0.3;
+        inner.position.y = 0.22;
+        flame.add(outer, inner);
+        flame.position.y = -h / 2 + 0.1;
+        visual.add(flame);
+        group.userData.flame = flame;
+        const tag = iconPlate(['flame'], { bg: '#ff9f6e', round: true, height: 0.34, border: '#ffffff' });
+        tag.position.y = h / 2 + 0.9;
+        group.add(tag);
+        group.userData.tag = tag;
+      } else if (d.kind === 'well') {
+        // 샘: 둥근 돌 우물 + 물(비면 물이 사라진다)
+        visual = new THREE.Group();
+        const ring = new THREE.Mesh(new THREE.CylinderGeometry(d.size[0] / 2, d.size[0] / 2 + 0.05, h, 16, 1, true), std('#cfc8b8', { side: THREE.DoubleSide }));
+        const rim = new THREE.Mesh(new THREE.TorusGeometry(d.size[0] / 2, 0.07, 8, 24), std('#bdb5a3'));
+        rim.rotation.x = Math.PI / 2;
+        rim.position.y = h / 2;
+        const pool = new THREE.Mesh(new THREE.CircleGeometry(d.size[0] / 2 - 0.04, 20), toon('#7fd0ff', { emissive: '#3aa0e0', emissiveIntensity: 0.25 }));
+        pool.rotation.x = -Math.PI / 2;
+        pool.position.y = h / 2 - 0.12;
+        visual.add(ring, rim, pool);
+        group.userData.pool = pool;
+        const tag = iconPlate(['water'], { bg: '#5fb8ff', round: true, height: 0.34, border: '#ffffff' });
+        tag.position.y = h / 2 + 0.45;
+        group.add(tag);
+        group.userData.tag = tag;
+      } else if (d.kind === 'ice') {
+        // 얼음 덩이: 반투명 하늘색 상자
+        visual = new THREE.Mesh(new THREE.BoxGeometry(...d.size), std('#d6f2ff', { transparent: true, opacity: 0.85, emissive: '#bfe9ff', emissiveIntensity: 0.25 }));
       } else if (d.kind === 'dummy') {
         // 시험용 적(허수아비): 체력 막대
         visual = new THREE.Group();
@@ -586,7 +674,7 @@ export class Renderer {
     this.poke(ev.by, 'cast');
     const from = positions.get(ev.by);
     if (!from) return;
-    if (ev.effect === 'FIREBALL') {
+    if (ev.effect === 'FIREBALL' || (ev.effect === 'WATER' && ev.mode !== 'SELF')) {
       const n = ev.mode === 'NEAR' ? 16 : 8;
       this.burst([from[0], from[1] + 0.3, from[2]], color, n, ev.mode === 'NEAR' ? 2.4 : 1.2, 0.8, 0.3, 0.06);
       return;
@@ -615,6 +703,37 @@ export class Renderer {
         this.poke(id, 'hit');
       }
       this.burst(to, color, 10, 2.2, 0.6);
+      if (ev.effect === 'STEAM') this.puffs([to[0], to[1] - 0.5, to[2]], 8, { color: '#ffffff', size: 0.7, spread: 0.4, rise: 2.5, life: 0.9 });
+      if (ev.effect === 'FIRE') this.puffs(to, 5, { color: '#ffb36b', size: 0.45, spread: 0.2, rise: 1.2, life: 0.5 });
+      if (ev.effect === 'WATER') this.puffs([to[0], to[1] + 0.8, to[2]], 6, { color: '#cfefff', size: 0.4, spread: 0.3, rise: -1.5, life: 0.5 });
+    }
+  }
+
+  // 세계의 성질 효과: 물 튀김·얼음·녹음·바위 깎임·단어 생김
+  worldFx(e) {
+    if (e.k === 'splash') {
+      this.puffs(e.pos, 8, { color: '#e3f6ff', size: 0.5, spread: e.radius * 0.5, rise: 1.4, life: 0.55 });
+      this.burst(e.pos, new THREE.Color('#5fb8ff'), 10, 2, 1.6, 0.5, 0.07);
+      for (const h of e.hits) if (h.effects.includes('douse')) this.puffs(e.pos, 10, { color: '#ffffff', size: 0.7, spread: 0.3, rise: 2, life: 1.1 });
+    } else if (e.k === 'freeze') {
+      this.burst(e.pos, new THREE.Color('#bfe9ff'), 14, 1.8, 1, 0.6, 0.08);
+      this.puffs(e.pos, 6, { color: '#f4fbff', size: 0.6, spread: 0.4, rise: 0.4, life: 0.7 });
+      this.poke(e.id, 'hit');
+    } else if (e.k === 'melt') {
+      this.puffs(e.pos, 10, { color: '#ffffff', size: 0.7, spread: 0.4, rise: 1.8, life: 1 }); // 김이 오른다
+    } else if (e.k === 'chip' || e.k === 'shatter') {
+      const big = e.k === 'shatter';
+      const b = this.bodyViews.get(e.id);
+      const pos = e.pos || (b ? [b.group.position.x, b.group.position.y, b.group.position.z] : null);
+      if (!pos) return;
+      this.burst(pos, new THREE.Color('#b9b6c4'), big ? 20 : 8, big ? 3 : 2, 1.5, 0.6, 0.09);
+      this.puffs(pos, big ? 12 : 4, { color: '#ece6dc', size: big ? 0.9 : 0.5, spread: 0.6, rise: 0.8, life: 0.8 });
+      this.poke(e.id, 'hit');
+    } else if (e.k === 'wordBorn') {
+      this.burst(e.pos, new THREE.Color('#ffe066'), 12, 1.6, 1.4, 0.7, 0.08);
+    } else if (e.k === 'ignite') {
+      const b = this.bodyViews.get(e.id);
+      if (b) this.burst([b.group.position.x, b.group.position.y + 0.3, b.group.position.z], new THREE.Color('#ffb347'), 12, 1.4, 1.6, 0.6, 0.08);
     }
   }
 
@@ -739,7 +858,23 @@ export class Renderer {
       if (s.h) { sy *= 1 + 0.08 * Math.sin(t * 14); sxz *= 1 - 0.04 * Math.sin(t * 14); }
       // 붙잡혔지만 힘이 모자라 뜨지 못함: 바닥에서 버둥거린다
       v.visual.position.x = s.hv ? Math.sin(t * 40) * 0.04 : 0;
-      v.visual.scale.set(v.baseScale.x * sxz, v.baseScale.y * sy, v.baseScale.z * sxz);
+      const sc = s.sc || 1; // 부서지며 작아진 바위
+      v.visual.scale.set(v.baseScale.x * sxz * sc, v.baseScale.y * sy * sc, v.baseScale.z * sxz * sc);
+      if (v.group.userData.tag && v.def.kind !== 'player') v.group.userData.tag.position.y = (v.def.size[1] * sc) / 2 + 0.45 + (v.def.kind === 'campfire' ? 0.45 : 0);
+      // 모닥불 불꽃·샘의 물(뽑아내면 꺼지고 빈다)
+      const flame = v.group.userData.flame;
+      if (flame) {
+        flame.visible = !!s.lit;
+        if (s.lit) {
+          flame.scale.set(1 + 0.08 * Math.sin(t * 13), 1 + 0.15 * Math.sin(t * 9), 1 + 0.08 * Math.cos(t * 11));
+          if (t - v.smokeAt > 0.35) {
+            v.smokeAt = t;
+            this.puffs([s.p[0], s.p[1] + 0.5, s.p[2]], 1, { color: '#f0ebe6', size: 0.35, spread: 0.05, rise: 0.9, life: 0.9, opacity: 0.6 });
+          }
+        }
+      }
+      if (v.group.userData.pool) v.group.userData.pool.visible = !!s.st;
+      if (v.group.userData.tag && v.def.kind !== 'player' && s.st !== undefined) v.group.userData.tag.material.opacity = s.st ? 1 : 0.35;
       // 그을림(아군 디버프): 색이 어두워지고 연기가 난다
       const scorched = s.d > 0;
       for (const m of v.mats) {
@@ -829,10 +964,13 @@ export class Renderer {
     for (const pr of frame.projectiles || []) {
       live.add(pr.id);
       let pv = this.projViews.get(pr.id);
+      const wet = pr.w === 'WATER';
       if (!pv) {
-        // 통통한 불덩이: 노란 속 + 주황 겉
-        const core = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), toon('#ffe27a', { emissive: '#ffb347', emissiveIntensity: 0.6 }));
-        const halo = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), new THREE.MeshBasicMaterial({ color: '#ff8a4d', transparent: true, opacity: 0.45, depthWrite: false }));
+        // 통통한 불덩이: 노란 속 + 주황 겉 / 물방울: 하늘색 속 + 파란 겉
+        const core = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), wet
+          ? toon('#bfe9ff', { emissive: '#5fb8ff', emissiveIntensity: 0.3 })
+          : toon('#ffe27a', { emissive: '#ffb347', emissiveIntensity: 0.6 }));
+        const halo = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), new THREE.MeshBasicMaterial({ color: wet ? '#5fb8ff' : '#ff8a4d', transparent: true, opacity: 0.45, depthWrite: false }));
         this.scene.add(core, halo);
         pv = { core, halo, trailAt: 0 };
         this.projViews.set(pr.id, pv);
@@ -843,7 +981,8 @@ export class Renderer {
       pv.halo.scale.setScalar(pr.r * (1.7 + 0.2 * Math.sin(t * 30)));
       if (t - pv.trailAt > 0.04) {
         pv.trailAt = t;
-        this.puffs(pr.p, 1, { color: Math.random() > 0.5 ? '#ffd27a' : '#ffa25a', size: pr.r * 2.2, spread: 0.05, rise: 0.4, life: 0.35, opacity: 0.85 });
+        if (wet) this.puffs(pr.p, 1, { color: '#cfefff', size: pr.r * 1.8, spread: 0.05, rise: -0.6, life: 0.3, opacity: 0.8 });
+        else this.puffs(pr.p, 1, { color: Math.random() > 0.5 ? '#ffd27a' : '#ffa25a', size: pr.r * 2.2, spread: 0.05, rise: 0.4, life: 0.35, opacity: 0.85 });
       }
     }
     for (const [id, pv] of this.projViews) {

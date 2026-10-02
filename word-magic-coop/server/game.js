@@ -4,10 +4,13 @@
 // 주문 = 효과 단어 1개 + 수식 단어(보유·장착한 개수만큼 중첩). 대상은 시전 요청의 대상 모드(AIM/SELF/NEAR).
 // 효과마다 시전 방식이 다르다: 밀치기·당기기(즉시·한 번) / 들기(시전 종료까지 지속 제어) / 파이어볼(투사체, 실제 명중 시 적용).
 // 들기는 여러 명이 한 물체를 같이 들 수 있고(무게를 나눠 든다), 주변 모드로 여러 물체를 한꺼번에 들 수 있다.
+//
+// 세계의 성질을 단어로(v0.5): 커다란 바위를 마법으로 부수면 <큰>이, 모닥불·샘에서 <당기기>로 뽑아내면 <불>·<물>이 나온다.
+// <물>은 추운 곳에서 얼음이 되고, <불>은 얼음을 녹이고 모닥불을 붙인다. 섞는 칸에서 <물> + <불> → <수증기>.
 
-import { LEVEL, SEAT_IDS } from '../shared/level.js';
+import { LEVEL, SEAT_IDS, inZone } from '../shared/level.js';
 import { TUNING, modFactor } from '../shared/tuning.js';
-import { WORDS, KIND, TRAIT, MOD_IDS, MODE_ORDER } from '../shared/words.js';
+import { WORDS, KIND, TRAIT, MOD_IDS, MODE_ORDER, traitsOf, reactionFor } from '../shared/words.js';
 import { resolveTargets, REASON, modeUnsupported, liftMaxBottom, liftLoads, liftShare, liftStrain } from '../shared/targeting.js';
 import { boxOfBody, overlaps, pointInBox, dist, normalize, segmentBlocked, rayBox } from '../shared/geom.js';
 import { Physics, bottomOf, clampExt } from './physics.js';
@@ -46,6 +49,8 @@ export class Game {
     for (const pid of this.seats) this.players[pid] = this.makePlayer(pid);
     this.projectiles = [];
     this.nextProjectileId = 1;
+    this.nextTokenId = 1; // 세계에서 새로 생긴 단어(부순 바위·뽑아낸 성질·반응)
+    this.nextIceAt = 0;
     this.goal = { timer: 0, cleared: false, inside: {} };
     this.history = [];
     this.recordHistory();
@@ -164,8 +169,16 @@ export class Game {
       pos: [d.pos[0], d.pos[1] + half[1], d.pos[2]],
       mass: d.mass ?? 1,
       // 캐릭터와 이동 사물은 밀리고 들린다. 허수아비(시험용 적)만 피해를 받는다. 고정 지형은 속성이 없다.
-      traits: { [TRAIT.MOVABLE]: true, [TRAIT.LIFTABLE]: true, [TRAIT.DAMAGEABLE]: d.kind === 'dummy' },
-      hp: d.kind === 'dummy' ? this.T.dummyHp : null,
+      // 바위·모닥불·샘은 제자리에 박혀 있다(traitsOf).
+      traits: traitsOf(d.kind),
+      fixed: !!traitsOf(d.kind)[TRAIT.FIXED],
+      hp: d.kind === 'dummy' ? this.T.dummyHp : d.kind === 'boulder' ? this.T.boulderHp : null,
+      baseHalf: [...half], // 부서지며 작아지는 바위의 원래 크기
+      scale: 1,
+      empty: false, // 모닥불(꺼짐)·샘(빔)
+      refillAt: 0,
+      yields: 0, // 이번 판에 뽑아낸 단어 수
+      warm: 0, // 얼음이 추운 곳 밖에 있던 시간
       downUntil: 0,
       inVel: [0, 0],
       ext: [0, 0],
@@ -255,6 +268,7 @@ export class Game {
         immune: this.time < b.immuneUntil,
         heldBy: [...b.heldBy],
         holding: this.players[b.id] ? this.holdingChain(b.id) : [],
+        empty: this.sourceSpent(b),
       })),
     };
   }
@@ -290,6 +304,7 @@ export class Game {
       case 'mod': return this.onMod(pid, msg);
       case 'loadout': return this.onLoadout(pid, msg);
       case 'release': return this.onRelease(pid);
+      case 'react': return this.onReact(pid, msg);
       case 'restart': return this.onRestart(pid);
       case 'rtt': return this.onRtt(pid, msg);
       default: return { ok: false };
@@ -353,6 +368,13 @@ export class Game {
       return this.castFireball(pid, aim, mods);
     }
     if (effect === 'LIFT') return this.startLift(pid, mode, aim, view, mods, fail);
+    if (effect === 'WATER') {
+      if (mode === 'SELF') return this.castSelfWash(pid, mods);
+      if (mode === 'NEAR') return this.castFireballRing(pid, aim, mods, 'WATER');
+      return this.castFireball(pid, aim, mods, 'WATER');
+    }
+    if (effect === 'FIRE') return this.castFire(pid, mode, aim, view, mods, fail);
+    if (effect === 'STEAM') return this.castSteam(pid, mode, aim, view, mods, fail);
     return fail(REASON.NO_EFFECT);
   }
 
@@ -372,6 +394,8 @@ export class Game {
     const camFwd = aim ? normalize([aim.dir[0], 0, aim.dir[2]]) : [Math.sin(caster.yaw), 0, Math.cos(caster.yaw)];
     for (const id of res.applicable) {
       const b = this.body(id);
+      if (!b) continue;
+      if (b.traits[TRAIT.BREAKABLE]) { this.chip(b, T.boulderPushHit * force, pid); continue; } // 부서지는 것은 깎인다
       let dir = [b.pos[0] - caster.pos[0], b.pos[2] - caster.pos[2]];
       const l = Math.hypot(dir[0], dir[1]);
       if (b.id === pid || l < T.pushSelfEpsilon) dir = [camFwd[0], camFwd[2]];
@@ -415,8 +439,12 @@ export class Game {
       targets = [pid];
       this.emit({ k: 'cast', by: pid, effect: 'PULL', mode, mods, targets, anchor: hp.map(r3) });
     } else {
+      const force = modFactor(T, mods, 'STRONG', 'pullForce');
       for (const id of res.applicable) {
         const b = this.body(id);
+        if (!b) continue;
+        if (b.traits[TRAIT.SOURCE]) { this.extract(b, pid); continue; } // 모닥불·샘: 성질을 단어로 뽑아낸다
+        if (b.traits[TRAIT.BREAKABLE]) { this.chip(b, T.boulderPushHit * force, pid); continue; }
         const d = [caster.pos[0] - b.pos[0], caster.pos[2] - b.pos[2]];
         const l = Math.hypot(d[0], d[1]);
         if (l < 1e-3) continue;
@@ -430,18 +458,21 @@ export class Game {
     return { ok: true, targets };
   }
 
-  // 투사체 하나 생성(수식 반영)
-  spawnFireball(pid, spawn, dir, mods) {
+  // 투사체 하나 생성(수식 반영). word: FIREBALL(폭발) / WATER(물 튀김)
+  spawnFireball(pid, spawn, dir, mods, word = 'FIREBALL') {
     const T = this.T;
+    const water = word === 'WATER';
     const proj = {
       id: this.nextProjectileId++,
+      word,
       owner: pid,
       pos: spawn,
-      vel: dir.map((v) => v * T.fireballSpeed),
-      radius: T.fireballRadius * modFactor(T, mods, 'BIG', 'fireballRadius'),
-      blast: T.fireballBlastRadius * modFactor(T, mods, 'BIG', 'blastRadius'),
-      damage: T.fireballDamage * modFactor(T, mods, 'STRONG', 'fireballDamage'),
-      life: T.fireballLife,
+      vel: dir.map((v) => v * (water ? T.waterSpeed : T.fireballSpeed)),
+      radius: water ? T.waterRadius * modFactor(T, mods, 'BIG', 'waterRadius') : T.fireballRadius * modFactor(T, mods, 'BIG', 'fireballRadius'),
+      blast: water ? T.waterSplashRadius * modFactor(T, mods, 'BIG', 'waterRadius') : T.fireballBlastRadius * modFactor(T, mods, 'BIG', 'blastRadius'),
+      damage: water ? 0 : T.fireballDamage * modFactor(T, mods, 'STRONG', 'fireballDamage'),
+      push: water ? T.waterPush * modFactor(T, mods, 'STRONG', 'waterPush') : T.fireballKnockback,
+      life: water ? T.waterLife : T.fireballLife,
     };
     this.projectiles.push(proj);
     return proj;
@@ -455,7 +486,7 @@ export class Game {
   }
 
   // <파이어볼>(조준): 시전자 앞에서 조준점으로 투사체를 쏜다. 효과는 날아가서 실제로 맞았을 때 적용한다.
-  castFireball(pid, aim, mods) {
+  castFireball(pid, aim, mods, word = 'FIREBALL') {
     const T = this.T;
     const caster = this.body(pid);
     let fwd = normalize([aim.dir[0], 0, aim.dir[2]]);
@@ -472,15 +503,15 @@ export class Game {
     const aimPoint = aim.origin.map((o, i) => o + aim.dir[i] * t);
     let dir = normalize(aimPoint.map((v, i) => v - spawn[i]));
     if (dir[0] * aim.dir[0] + dir[1] * aim.dir[1] + dir[2] * aim.dir[2] < 0.2) dir = aim.dir;
-    const proj = this.spawnFireball(pid, spawn, dir, mods);
+    const proj = this.spawnFireball(pid, spawn, dir, mods, word);
     this.faceAim(pid, aim);
     this.players[pid].cooldownUntil = this.time + T.castCooldown;
-    this.emit({ k: 'cast', by: pid, effect: 'FIREBALL', mode: 'AIM', mods, projectile: proj.id, projectiles: [proj.id], radius: r3(proj.radius), targets: [] });
+    this.emit({ k: 'cast', by: pid, effect: word, mode: 'AIM', mods, projectile: proj.id, projectiles: [proj.id], radius: r3(proj.radius), targets: [] });
     return { ok: true, projectile: proj.id };
   }
 
   // <파이어볼>(주변): 시전자 둘레 사방으로 수평 발사. 각 투사체는 실제로 맞은 대상에만 적용한다 [제안안]
-  castFireballRing(pid, aim, mods) {
+  castFireballRing(pid, aim, mods, word = 'FIREBALL') {
     const T = this.T;
     const caster = this.body(pid);
     const yaw = aim && (aim.dir[0] || aim.dir[2]) ? Math.atan2(aim.dir[0], aim.dir[2]) : caster.yaw;
@@ -489,13 +520,13 @@ export class Game {
     for (let i = 0; i < T.fireballNearCount; i++) {
       const a = yaw + (i / T.fireballNearCount) * Math.PI * 2;
       const fwd = [Math.sin(a), 0, Math.cos(a)];
-      const proj = this.spawnFireball(pid, this.fireballSpawnPoint(caster, fwd), fwd, mods);
+      const proj = this.spawnFireball(pid, this.fireballSpawnPoint(caster, fwd), fwd, mods, word);
       ids.push(proj.id);
       radius = proj.radius;
     }
     this.faceAim(pid, aim);
     this.players[pid].cooldownUntil = this.time + T.castCooldown;
-    this.emit({ k: 'cast', by: pid, effect: 'FIREBALL', mode: 'NEAR', mods, projectile: ids[0], projectiles: ids, radius: r3(radius), targets: [] });
+    this.emit({ k: 'cast', by: pid, effect: word, mode: 'NEAR', mods, projectile: ids[0], projectiles: ids, radius: r3(radius), targets: [] });
     return { ok: true, projectiles: ids };
   }
 
@@ -507,8 +538,10 @@ export class Game {
     const point = [caster.pos[0], bottomOf(caster) + 0.2, caster.pos[2]];
     const pr = {
       id: this.nextProjectileId++,
+      word: 'FIREBALL',
       owner: pid,
       vel: fwd,
+      push: T.fireballKnockback,
       blast: T.fireballBlastRadius * modFactor(T, mods, 'BIG', 'blastRadius'),
       damage: T.fireballDamage * modFactor(T, mods, 'STRONG', 'fireballDamage'),
     };
@@ -518,6 +551,259 @@ export class Game {
     this.emit({ k: 'cast', by: pid, effect: 'FIREBALL', mode: 'SELF', mods, targets: [pid], launched });
     this.explode(pr, point, { type: 'self' });
     return { ok: true, launched };
+  }
+
+  // <물>(본인): 머리 위로 물을 끼얹는다. 그을림을 씻어 낸다. 추운 곳이면 발밑에 얼음이 생긴다 [제안안]
+  castSelfWash(pid, mods) {
+    const caster = this.body(pid);
+    const washed = caster.debuffUntil > this.time;
+    caster.debuffUntil = 0;
+    this.players[pid].cooldownUntil = this.time + this.T.castCooldown;
+    this.emit({ k: 'cast', by: pid, effect: 'WATER', mode: 'SELF', mods, targets: [pid], washed });
+    const feet = [caster.pos[0], bottomOf(caster) + 0.05, caster.pos[2]];
+    if (inZone(feet, 'cold', this.level)) this.freezeAt(feet, pid);
+    return { ok: true, washed };
+  }
+
+  // <불>: 즉시. 조준한 것(주변 모드면 둘레의 것들)을 데운다.
+  // 적은 피해, 친구는 그을림, 얼음은 녹고, 꺼진 모닥불은 다시 붙는다 [제안안]
+  castFire(pid, mode, aim, view, mods, fail) {
+    const T = this.T;
+    const reach = modFactor(T, mods, 'BIG', 'fireReach');
+    const res = resolveTargets(mode, 'FIRE', this.targetingWorld(view), pid, aim, { range: T.aimedMaxRange * reach, radius: T.nearbyRadius * reach }, T);
+    if (!res.applicable.length) return fail(res.reason);
+    const dmg = T.fireDamage * modFactor(T, mods, 'STRONG', 'fireDamage');
+    const hits = [];
+    for (const id of res.applicable) {
+      const b = this.body(id);
+      if (b) hits.push({ id, effects: this.heat(b, dmg, pid) });
+    }
+    this.faceAim(pid, aim);
+    this.players[pid].cooldownUntil = this.time + T.castCooldown;
+    this.emit({ k: 'cast', by: pid, effect: 'FIRE', mode, mods, targets: res.applicable, hits });
+    return { ok: true, targets: res.applicable, hits };
+  }
+
+  // 데우기(<불>·파이어볼 폭발 공통). 반환: 일어난 일 목록
+  heat(b, dmg, by) {
+    const effects = [];
+    if (b.kind === 'ice') { this.melt(b, by); effects.push('melt'); return effects; }
+    if (b.kind === 'campfire' && b.empty) {
+      b.empty = false;
+      b.refillAt = 0;
+      this.emit({ k: 'ignite', id: b.id, by });
+      effects.push('ignite');
+      return effects;
+    }
+    if (b.traits[TRAIT.DAMAGEABLE]) {
+      if (!b.downUntil && dmg > 0) {
+        b.hp = Math.max(0, b.hp - dmg);
+        effects.push('damage');
+        if (b.hp <= 0) {
+          b.downUntil = this.time + this.T.dummyRespawn;
+          this.emit({ k: 'dummyDown', id: b.id });
+        }
+      }
+    } else if (b.kind === 'player') {
+      b.debuffUntil = this.time + this.T.allyDebuffDuration; // 아군: 피해 대신 그을림
+      effects.push('debuff');
+    }
+    return effects;
+  }
+
+  // <수증기>: 즉시. 뜨거운 김이 솟아 대상을 위로 띄운다(본인 모드는 없다: 혼자 높은 곳에 오르지 않게) [제안안]
+  castSteam(pid, mode, aim, view, mods, fail) {
+    const T = this.T;
+    const reach = modFactor(T, mods, 'BIG', 'steamReach');
+    const res = resolveTargets(mode, 'STEAM', this.targetingWorld(view), pid, aim, { range: T.aimedMaxRange * reach, radius: T.nearbyRadius * reach }, T);
+    if (!res.applicable.length) return fail(res.reason);
+    const up = T.steamLift * modFactor(T, mods, 'STRONG', 'steamLift');
+    for (const id of res.applicable) {
+      const b = this.body(id);
+      if (!b || b.hold) continue; // 들려 있는 것은 드는 사람이 정한 높이를 따른다
+      b.vy = Math.max(b.vy, up);
+      b.grounded = false;
+    }
+    this.faceAim(pid, aim);
+    this.players[pid].cooldownUntil = this.time + T.castCooldown;
+    this.emit({ k: 'cast', by: pid, effect: 'STEAM', mode, mods, targets: res.applicable });
+    return { ok: true, targets: res.applicable };
+  }
+
+  // ---------------------------------------------------------------- 세계의 성질을 단어로
+  // 세계에서 새 단어가 생긴다. from 자리에서 toward(시전자) 쪽으로 살짝 튀어 나와 땅에 떨어진다.
+  spawnWord(word, from, toward = null, why = '') {
+    const T = this.T;
+    let dir = toward ? [toward[0] - from[0], toward[2] - from[2]] : [0, 0];
+    const l = Math.hypot(dir[0], dir[1]);
+    dir = l > 1e-3 ? [dir[0] / l, dir[1] / l] : [0, 0];
+    const t = this.makeToken({ id: `n${this.nextTokenId++}`, word, pos: [...from] }, null);
+    t.vel = [dir[0] * T.dropToss, dir[1] * T.dropToss];
+    t.vy = T.dropToss;
+    if (!t.lastSafe?.ground) t.lastSafe = { ground: this.groundUnder([from[0], 0, from[2]]) || 'floor', pos: [from[0], 0, from[2]] };
+    this.tokens.push(t);
+    this.emit({ k: 'wordBorn', token: t.id, word, why, pos: from.map(r3) });
+    return t;
+  }
+
+  // 커다란 바위 깎기: 맞을 때마다 단단함이 줄고, 단계가 내려갈 때마다 작아지며 <큰>이 떨어진다. 다 부서지면 사라진다.
+  chip(b, amount, by) {
+    const T = this.T;
+    if (!(amount > 0) || b.hp <= 0) return;
+    const per = T.boulderHp / T.boulderStages;
+    const before = Math.ceil(b.hp / per - 1e-9);
+    b.hp = Math.max(0, b.hp - amount);
+    const after = Math.ceil(b.hp / per - 1e-9);
+    const caster = this.body(by);
+    const words = [];
+    for (let s = before; s > after; s--) {
+      const top = [b.pos[0], b.pos[1] + b.half[1] + 0.2, b.pos[2]];
+      words.push(this.spawnWord('BIG', top, caster?.pos, 'chip').id); // 바위의 "큼"이 떨어져 나온다
+    }
+    this.emit({ k: 'chip', id: b.id, by, hp: r3(b.hp), stage: after, words });
+    if (after <= 0) {
+      this.emit({ k: 'shatter', id: b.id, by, pos: b.pos.map(r3) });
+      this.deactivate(b);
+      return;
+    }
+    if (after < before) {
+      // 작아진다(바닥은 그대로)
+      const bottom = bottomOf(b);
+      b.scale = 0.4 + 0.6 * (after / T.boulderStages);
+      b.half = b.baseHalf.map((h) => h * b.scale);
+      b.pos[1] = bottom + b.half[1];
+    }
+  }
+
+  // 모닥불·샘이 다 쓰였나(비었거나 이번 판에 내줄 만큼 다 내줌)
+  sourceSpent(b) {
+    if (!b.traits?.[TRAIT.SOURCE]) return false;
+    return b.empty || b.yields >= this.T.sourceYields;
+  }
+
+  // <당기기>로 성질을 뽑아낸다: 모닥불 → <불>(불이 꺼짐), 샘 → <물>(샘이 빔). 조금 지나면 다시 찬다.
+  extract(b, by) {
+    if (this.sourceSpent(b)) return false;
+    const word = b.traits[TRAIT.SOURCE];
+    const top = [b.pos[0], b.pos[1] + b.half[1] + 0.3, b.pos[2]];
+    const t = this.spawnWord(word, top, this.body(by)?.pos, 'extract');
+    b.empty = true;
+    b.yields += 1;
+    b.refillAt = this.time + this.T.sourceRefill;
+    this.emit({ k: 'extract', id: b.id, by, word, token: t.id });
+    return true;
+  }
+
+  // 마법으로 생기는 사물 꺼내기(얼음). 다 쓰고 있으면 가장 오래된 것을 녹여 다시 쓴다.
+  activate(kind, base, by) {
+    const defs = (this.level.reserve || []).filter((d) => d.kind === kind);
+    if (!defs.length) return null;
+    let def = defs.find((d) => !this.body(d.id));
+    if (!def) {
+      const oldest = this.bodies.filter((b) => b.kind === kind).sort((a, c) => a.bornAt - c.bornAt)[0];
+      this.melt(oldest, by);
+      def = defs.find((d) => d.id === oldest.id);
+    }
+    const b = this.makeBody({ ...def, pos: base });
+    b.bornAt = this.time + this.tick * 1e-9;
+    this.bodies.push(b);
+    if (!this.placeNear(b, base)) { this.bodies = this.bodies.filter((x) => x !== b); return null; }
+    b.lastSafe = { ground: this.groundUnder([b.pos[0], bottomOf(b) + 0.01, b.pos[2]]) || b.lastSafe.ground, pos: [b.pos[0], bottomOf(b), b.pos[2]] };
+    return b;
+  }
+
+  // 추운 곳에 닿은 물이 언다: 닿은 곳 아래 땅에 얼음 덩이가 생긴다
+  freezeAt(point, by) {
+    const floor = this.surfaceBelow([point[0], point[1] + 0.01, point[2]]);
+    if (floor === null) return null;
+    const b = this.activate('ice', [point[0], floor, point[2]], by);
+    if (b) this.emit({ k: 'freeze', id: b.id, by, pos: b.pos.map(r3) });
+    return b;
+  }
+
+  melt(b, by = null) {
+    this.emit({ k: 'melt', id: b.id, by, pos: b.pos.map(r3) });
+    this.deactivate(b);
+  }
+
+  // 사물을 세계에서 뺀다(녹은 얼음, 다 부서진 바위). 들고 있던 것·위에 서 있던 것을 정리한다.
+  deactivate(b) {
+    for (const h of [...b.heldBy]) this.releaseItem(h, b.id, 'gone');
+    this.bodies = this.bodies.filter((x) => x !== b);
+    for (const o of this.bodies) if (o.groundId === b.id) { o.groundId = null; o.grounded = false; }
+  }
+
+  // 물 튀김: 친구는 그을림이 씻기고, 움직이는 것은 살짝 밀리고, 모닥불은 꺼지고, 빈 샘은 찬다.
+  // 추운 곳에 닿으면 그 자리에 얼음이 생긴다.
+  splash(pr, point, hit) {
+    const hits = [];
+    for (const b of [...this.bodies]) {
+      if (b.id === pr.owner) continue;
+      const box = boxOfBody(b);
+      const dx = Math.max(box.min[0] - point[0], 0, point[0] - box.max[0]);
+      const dy = Math.max(box.min[1] - point[1], 0, point[1] - box.max[1]);
+      const dz = Math.max(box.min[2] - point[2], 0, point[2] - box.max[2]);
+      const direct = hit.type === 'body' && hit.id === b.id;
+      if (!direct && Math.hypot(dx, dy, dz) > pr.blast) continue;
+      if (!direct && segmentBlocked(point, b.pos, this.statics)) continue;
+      if (b.kind === 'player' && this.time < b.immuneUntil) continue;
+      const effects = [];
+      if (b.kind === 'player' && b.debuffUntil > this.time) { b.debuffUntil = 0; effects.push('wash'); }
+      if (b.kind === 'campfire' && !b.empty) {
+        b.empty = true;
+        b.refillAt = this.time + this.T.sourceRefill;
+        effects.push('douse');
+      }
+      if (b.kind === 'well' && b.empty) { b.empty = false; b.refillAt = 0; effects.push('fill'); }
+      if (b.traits[TRAIT.MOVABLE] && pr.push > 0) {
+        let d = [b.pos[0] - point[0], b.pos[2] - point[2]];
+        const l = Math.hypot(d[0], d[1]);
+        d = l > 1e-3 ? [d[0] / l, d[1] / l] : normalize([pr.vel[0], 0, pr.vel[2]]).filter((_, i) => i !== 1);
+        b.ext[0] += d[0] * pr.push;
+        b.ext[1] += d[1] * pr.push;
+        clampExt(b, b.extCap ?? this.T.pushMaxSpeed);
+        effects.push('push');
+      }
+      if (effects.length) hits.push({ id: b.id, effects, direct });
+    }
+    this.emit({ k: 'splash', id: pr.id, by: pr.owner, pos: point.map(r3), radius: r3(pr.blast), hits });
+    if (inZone(point, 'cold', this.level)) this.freezeAt(point, pr.owner);
+  }
+
+  // 섞기(가방의 섞는 칸): 가진 단어들의 종류·개수가 반응과 맞으면 그 단어들이 새 단어 하나가 된다.
+  onReact(pid, msg) {
+    const ids = Array.isArray(msg.tokens) ? msg.tokens : [];
+    const fail = () => {
+      this.emit({ k: 'reactFail', to: pid, reason: REASON.BAD_MIX });
+      return { ok: false, reason: REASON.BAD_MIX };
+    };
+    if (!ids.length || ids.length > 4 || new Set(ids).size !== ids.length) return fail();
+    const toks = ids.map((id) => this.token(id));
+    if (toks.some((t) => !t || t.owner !== pid)) return fail();
+    const r = reactionFor(toks.map((t) => t.word));
+    if (!r) return fail();
+    for (const t of toks) this.unequipToken(pid, t.id);
+    this.tokens = this.tokens.filter((t) => !ids.includes(t.id));
+    const made = this.makeToken({ id: `n${this.nextTokenId++}`, word: r.makes }, pid);
+    this.tokens.push(made);
+    const equipped = this.receiveToken(pid, made);
+    this.emit({ k: 'react', by: pid, used: toks.map((t) => t.word), word: r.makes, token: made.id, equipped });
+    return { ok: true, token: made.id, word: r.makes };
+  }
+
+  // 모닥불·샘이 다시 차고, 추운 곳 밖의 얼음은 녹는다
+  stepWorld(dt) {
+    for (const b of [...this.bodies]) {
+      if (b.traits[TRAIT.SOURCE] && b.empty && b.refillAt && this.time >= b.refillAt) {
+        b.empty = false;
+        b.refillAt = 0;
+        this.emit({ k: 'refill', id: b.id });
+      }
+      if (b.kind === 'ice') {
+        b.warm = inZone(b.pos, 'cold', this.level) ? 0 : b.warm + dt;
+        if (b.warm >= this.T.iceMelt) this.melt(b);
+      }
+    }
   }
 
   // <들기>: 조준 모드는 조준한 하나, 주변 모드는 반경 안의 들 수 있는 것들을 가벼운 것부터 힘이 닿는 만큼 잡는다.
@@ -852,6 +1138,7 @@ export class Game {
       if (bottomOf(b) < this.T.killY) this.recoverBody(b);
     }
     this.stepProjectiles(dt);
+    this.stepWorld(dt);
     this.stepTokens(dt);
     this.stepAutoPickup();
     this.stepGoal(dt);
@@ -875,12 +1162,14 @@ export class Game {
       for (const s of this.statics) test(s, 'static', s.id);
       for (const b of this.bodies) if (b.id !== pr.owner) test(boxOfBody(b), 'body', b.id);
       if (hit) {
-        this.explode(pr, pr.pos.map((v, i) => v + dir[i] * hit.t), hit);
+        const point = pr.pos.map((v, i) => v + dir[i] * hit.t);
+        if (pr.word === 'WATER') this.splash(pr, point, hit);
+        else this.explode(pr, point, hit);
         continue;
       }
       pr.pos = pr.pos.map((v, i) => v + move[i]);
       if (pr.life <= 0 || pr.pos[1] < this.T.killY) {
-        this.emit({ k: 'fizzle', id: pr.id, pos: pr.pos.map(r3) });
+        this.emit({ k: 'fizzle', id: pr.id, pos: pr.pos.map(r3), word: pr.word });
         continue;
       }
       keep.push(pr);
@@ -893,8 +1182,8 @@ export class Game {
   explode(pr, point, hit) {
     const T = this.T;
     const hits = [];
-    for (const b of this.bodies) {
-      if (b.id === pr.owner) continue;
+    for (const b of [...this.bodies]) {
+      if (b.id === pr.owner || !this.bodies.includes(b)) continue;
       const box = boxOfBody(b);
       const dx = Math.max(box.min[0] - point[0], 0, point[0] - box.max[0]);
       const dy = Math.max(box.min[1] - point[1], 0, point[1] - box.max[1]);
@@ -903,26 +1192,16 @@ export class Game {
       if (!direct && Math.hypot(dx, dy, dz) > pr.blast) continue;
       if (!direct && segmentBlocked(point, b.pos, this.statics)) continue;
       if (b.kind === 'player' && this.time < b.immuneUntil) continue;
-      const effects = [];
-      if (b.traits[TRAIT.DAMAGEABLE]) {
-        if (!b.downUntil) {
-          b.hp = Math.max(0, b.hp - pr.damage);
-          effects.push('damage');
-          if (b.hp <= 0) {
-            b.downUntil = this.time + T.dummyRespawn;
-            this.emit({ k: 'dummyDown', id: b.id });
-          }
-        }
-      } else if (b.kind === 'player') {
-        b.debuffUntil = this.time + T.allyDebuffDuration; // 아군: 피해 대신 디버프
-        effects.push('debuff');
-      }
+      if (b.traits[TRAIT.BREAKABLE]) { this.chip(b, pr.damage, pr.owner); hits.push({ id: b.id, effects: ['chip'], direct }); continue; }
+      // 적은 피해, 아군은 그을림(체력 감소 없음), 얼음은 녹고, 꺼진 모닥불은 붙는다
+      const effects = b.traits[TRAIT.HEATABLE] ? this.heat(b, pr.damage, pr.owner) : [];
+      if (effects.includes('melt')) { hits.push({ id: b.id, effects, direct }); continue; }
       if (b.traits[TRAIT.MOVABLE]) {
         let d = [b.pos[0] - point[0], b.pos[2] - point[2]];
         const l = Math.hypot(d[0], d[1]);
         d = l > 1e-3 ? [d[0] / l, d[1] / l] : normalize([pr.vel[0], 0, pr.vel[2]]).filter((_, i) => i !== 1);
-        b.ext[0] += d[0] * T.fireballKnockback;
-        b.ext[1] += d[1] * T.fireballKnockback;
+        b.ext[0] += d[0] * pr.push;
+        b.ext[1] += d[1] * pr.push;
         clampExt(b, b.extCap ?? T.pushMaxSpeed);
         effects.push('push');
       }
@@ -1085,9 +1364,12 @@ export class Game {
         if (b.heldBy.length) o.h = [...b.heldBy]; // 들고 있는 사람들
         if (b.strained) o.hv = 1; // 붙잡혔지만 힘이 모자라 뜨지 못함
         if (b.hp !== null) { o.hp = r3(b.hp); o.dn = b.downUntil ? 1 : 0; }
+        if (b.scale !== 1) o.sc = r3(b.scale); // 부서지며 작아진 바위
+        if (b.traits[TRAIT.SOURCE]) o.st = this.sourceSpent(b) ? 0 : 1; // 모닥불 타는 중·샘 참
+        if (b.kind === 'campfire' && !b.empty) o.lit = 1;
         return o;
       }),
-      pr: this.projectiles.map((pr) => ({ id: pr.id, p: pr.pos.map(r3), r: r3(pr.radius), o: pr.owner })),
+      pr: this.projectiles.map((pr) => ({ id: pr.id, p: pr.pos.map(r3), r: r3(pr.radius), o: pr.owner, w: pr.word })),
       k: this.tokens.map((tk) => ({ id: tk.id, w: tk.word, o: tk.owner, p: tk.pos ? tk.pos.map(r3) : null })),
       p: Object.fromEntries(this.seats.map((pid) => {
         const pl = this.players[pid];

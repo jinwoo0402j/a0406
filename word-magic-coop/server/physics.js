@@ -4,6 +4,7 @@
 // - 아래에 있는 물체부터 움직이고, 위에 올라탄 물체는 받치는 물체의 이동을 따라간다(물체 위에 서기).
 // - 들린 물체(b.hold)는 중력 대신 목표 지점을 향한 스프링·감쇠로 움직인다(관성·넘침이 생긴다).
 //   들린 물체가 올라가면 위에 얹힌 물체를 함께 밀어 올린다.
+// - 제자리에 박힌 물체(b.fixed: 바위·모닥불·샘)는 움직이지 않고 지형처럼 막기만 한다.
 
 import { boxOfBody, overlaps, overlapsOnAxes, EPS } from '../shared/geom.js';
 
@@ -78,7 +79,7 @@ export class Physics {
       .sort((p, q) => p.ob.min[1] - q.ob.min[1]);
     for (const { o, ob } of above) {
       if (ob.min[1] >= box.max[1] + allowed) continue;
-      if (visited.has(o.id)) {
+      if (visited.has(o.id) || o.fixed) {
         allowed = Math.min(allowed, ob.min[1] - box.max[1]);
         continue;
       }
@@ -98,6 +99,7 @@ export class Physics {
 
     // 1) 속도 갱신
     for (const b of bodies) {
+      if (b.fixed) continue;
       if (b.kind === 'player') {
         const accel = b.grounded ? T.groundAccel : T.airAccel;
         const speed = T.walkSpeed * (b.speedFactor ?? 1); // 디버프(그을림) 등으로 느려질 수 있다
@@ -144,6 +146,7 @@ export class Physics {
     const order = [...bodies].sort((p, q) => bottomOf(p) - bottomOf(q));
     const disp = new Map();
     for (const b of order) {
+      if (b.fixed) { b.grounded = true; continue; }
       const start = [...b.pos];
 
       // 받치는 물체가 이번 틱에 움직였다면 따라간다

@@ -5,12 +5,12 @@ import { rigFor, CAM } from './camera.js';
 import { FONT_STACK } from './labels.js';
 import { LEVEL, SEAT_IDS, bodyDefs } from '../shared/level.js';
 import { TUNING, modFactor } from '../shared/tuning.js';
-import { WORDS, KIND, MOD_IDS, MODE_ORDER, MODE_LABEL } from '../shared/words.js';
+import { WORDS, KIND, MOD_IDS, MODE_ORDER, MODE_LABEL, traitsOf } from '../shared/words.js';
 import { resolveTargets, modeUnsupported, REASON, liftShare } from '../shared/targeting.js';
 import { segmentBlocked } from '../shared/geom.js';
 import { HostSession } from './host.js';
 import { Sfx } from './sfx.js';
-import { Inventory, HOTBAR, MAIN } from './inventory.js';
+import { Inventory, HOTBAR, MAIN, MIX } from './inventory.js';
 import { hostRoom, joinRoom, CODE_RE } from './p2p.js';
 import { icon, key, chip, esc, EFFECT_ICON, MODE_ICON } from './icons.js';
 import { SelfPredictor } from './predict.js';
@@ -28,7 +28,10 @@ function setDom(el, key, value, apply) {
 const setClass = (el, v) => setDom(el, 'class', v, (x) => { el.className = x; });
 const setWidth = (el, v) => setDom(el, 'width', v, (x) => { el.style.width = x; });
 const setHidden = (el, v) => setDom(el, 'hidden', v, (x) => { el.hidden = x; });
-const NAMES = { ...Object.fromEntries(SEAT_IDS.map((id) => [id, id])), rock: '돌', box1: '상자', box2: '무거운 상자', dummy: '허수아비', cargo: '짐' };
+const NAMES = {
+  ...Object.fromEntries(SEAT_IDS.map((id) => [id, id])), rock: '돌', box1: '상자', box2: '무거운 상자', dummy: '허수아비', cargo: '짐',
+  boulder: '커다란 바위', campfire: '모닥불', well: '샘', ice1: '얼음', ice2: '얼음', ice3: '얼음',
+};
 const BODY_DEF = new Map(bodyDefs().map((d) => [d.id, d]));
 const SEAT_COLOR = Object.fromEntries(LEVEL.seats.map((s) => [s.id, s.color]));
 const SENS = 0.0025;
@@ -213,7 +216,12 @@ function send(msg) {
 
 // 화면의 글자는 기호로: 사람은 색 동그라미, 조작은 키 모양 + 그림
 const pc = (id, cls = '') => chip(id, SEAT_COLOR[id], cls);
-const OBJ_ICON = { cargo: ['flag'], rock: ['rock'], box1: ['box'], box2: ['box', 'weight'], dummy: ['dummy'] };
+const OBJ_ICON = {
+  cargo: ['flag'], rock: ['rock'], box1: ['box'], box2: ['box', 'weight'], dummy: ['dummy'],
+  boulder: ['rock', 'big'], campfire: ['flame'], well: ['water'], ice1: ['snow'], ice2: ['snow'], ice3: ['snow'],
+};
+// 부서지며 작아진 바위는 스냅숏의 sc만큼 작다
+const halfOf = (id, v) => BODY_DEF.get(id).size.map((x) => (x / 2) * (v?.sc || 1));
 // 사람·물건 표시(사람은 자리 색 동그라미, 짐은 선물 상자, 나머지는 짧은 이름)
 function P(id) {
   if (SEAT_COLOR[id]) return pc(id);
@@ -436,6 +444,9 @@ function interpolated() {
       hp: y.hp,
       dn: y.dn,
       g: y.g,
+      sc: y.sc,
+      st: y.st,
+      lit: y.lit,
       speed: jump ? 0 : Math.hypot(y.p[0] - x.p[0], y.p[2] - x.p[2]) / dtS,
     });
   }
@@ -507,6 +518,9 @@ const REASON_HTML = {
   [REASON.PROTECTED]: () => `${icon('shield')}${icon('no')}`,
   [REASON.BAD_AIM]: () => `${icon('aim')}${icon('no')}`,
   [REASON.NOT_PLAYING]: () => `${icon('stop')}`,
+  [REASON.NOT_HEATABLE]: () => `${W('FIRE')}${icon('no')}`,
+  [REASON.SOURCE_EMPTY]: () => `${icon('pull')}${icon('no')} ${icon('clock')}`,
+  [REASON.BAD_MIX]: () => `${icon('mix')}${icon('no')}`,
   [REASON.SUSTAINING]: () => `${icon('lift')} ${icon('arrow')} ${END_CAST_IC}${icon('stop')}`,
 };
 const REASON_KEY = Object.fromEntries(Object.entries(REASON).map(([k, v]) => [v, k]));
@@ -526,7 +540,8 @@ function playSfx(e) {
   switch (e.k) {
     case 'cast': {
       const kk = k(at(e.by));
-      if (e.effect === 'FIREBALL') { if (e.mode !== 'SELF') sfx.play('fire', kk); break; }
+      if (e.effect === 'FIREBALL' || e.effect === 'FIRE') { if (e.mode !== 'SELF') sfx.play('fire', kk); break; }
+      if (e.effect === 'WATER' || e.effect === 'STEAM') { sfx.play('throw', kk); break; }
       sfx.play(e.effect === 'PULL' ? 'pull' : 'push', kk);
       if ((e.targets || []).some((id) => id !== e.by)) sfx.play('hit', kk);
       break;
@@ -537,6 +552,11 @@ function playSfx(e) {
       break;
     case 'liftEnd': if (e.reason === 'released') sfx.play('liftEnd', k(at(e.target))); break;
     case 'boom': sfx.play('boom', k(e.pos)); break;
+    case 'splash': sfx.play('hit', k(e.pos)); break;
+    case 'chip': case 'shatter': sfx.play('boom', k(at(e.id) || e.pos) * 0.6); break;
+    case 'wordBorn': sfx.play('pickup', k(e.pos)); break;
+    case 'react': sfx.play('give', 1); break;
+    case 'reactFail': sfx.play('fail'); break;
     case 'pickup': sfx.play(e.from ? 'give' : 'pickup', k(at(e.by))); break;
     case 'throw': sfx.play('throw', k(at(e.by))); break;
     case 'release': sfx.play('release', k(at(e.by))); break;
@@ -650,7 +670,7 @@ function onEvent(e) {
       renderer.castFx(e, pos);
       const spell = spellHTML(e.effect, e.mods);
       const to = icon('arrow');
-      if (e.effect === 'FIREBALL') log(`${P(e.by)}${spell}${icon(MODE_ICON[e.mode] || 'aim')}${e.mode === 'NEAR' ? '×4' : ''}`);
+      if (e.effect === 'FIREBALL' || (e.effect === 'WATER' && e.mode !== 'SELF')) log(`${P(e.by)}${spell}${icon(MODE_ICON[e.mode] || 'aim')}${e.mode === 'NEAR' ? '×4' : ''}`);
       else if (e.effect === 'PULL' && e.anchor) log(`${P(e.by)}${spell}${icon('wall')}${icon('pull')}${P(e.by)}`);
       else log(`${P(e.by)}${spell}${icon(MODE_ICON[e.mode])}${to}${e.targets.map(P).join('')}`);
       break;
@@ -681,6 +701,55 @@ function onEvent(e) {
     }
     case 'fizzle':
       renderer.fizzleFx(e.pos);
+      break;
+    // 세계의 성질을 단어로
+    case 'splash': {
+      renderer.worldFx(e);
+      const parts = e.hits.map((h) => {
+        if (h.effects.includes('douse')) return `${P(h.id)}${icon('water')}${icon('no')}`;
+        if (h.effects.includes('fill')) return `${P(h.id)}${icon('water')}${icon('ok')}`;
+        if (h.effects.includes('wash')) return `${P(h.id)}${icon('slow')}${icon('no')}`;
+        return null;
+      }).filter(Boolean);
+      if (parts.length) log(`${icon('water')}${parts.join(' ')}`);
+      break;
+    }
+    case 'freeze':
+      renderer.worldFx(e);
+      log(`${P(e.by)}${W('WATER')}${icon('snow')}${icon('arrow')}${P(e.id)}`);
+      break;
+    case 'melt':
+      renderer.worldFx(e);
+      log(`${P(e.id)}${icon('steam')}`);
+      break;
+    case 'chip':
+      renderer.worldFx(e);
+      if (e.words?.length) log(`${P(e.by)}${icon('arrow')}${P(e.id)}${icon('arrow')}${W('BIG')}${e.words.length > 1 ? `×${e.words.length}` : ''}`);
+      break;
+    case 'shatter':
+      renderer.worldFx(e);
+      log(`${P(e.id)}${icon('boom')}`);
+      break;
+    case 'wordBorn':
+      renderer.worldFx(e);
+      break;
+    case 'extract':
+      log(`${P(e.by)}${W('PULL')}${icon('arrow')}${P(e.id)}${icon('arrow')}${W(e.word)}`);
+      if (e.by === S.me) toast(`${P(e.id)}${icon('arrow')}${W(e.word)}${icon('star')}`, 'info');
+      break;
+    case 'ignite':
+      renderer.worldFx(e);
+      log(`${P(e.id)}${W('FIRE')}${icon('ok')}`);
+      break;
+    case 'refill':
+      log(`${P(e.id)}${icon('restart')}`);
+      break;
+    case 'react':
+      log(`${P(e.by)}${icon('mix')}${e.used.map((w) => W(w)).join('')}${icon('arrow')}${W(e.word)}`);
+      if (e.by === S.me) toast(`${icon('star')}${e.used.map((w) => W(w)).join(icon('plus'))}${icon('equals')}${W(e.word, 1, true)}`, 'info');
+      break;
+    case 'reactFail':
+      toast(reasonHTML(e.reason));
       break;
     case 'dummyDown':
       log(`${P('dummy')}${icon('down')}`);
@@ -836,6 +905,7 @@ function toggleEditor(open = !S.editorOpen) {
     renderBag();
   } else {
     inv().returnCursor();
+    inv().returnMix();
     S.hover = null;
     $('mc-tip').hidden = true;
     $('mc-cursor').innerHTML = '';
@@ -1013,14 +1083,15 @@ function buildPreview(bodies, rig) {
     if (S.mode === 'SELF') return { kind: 'blast', radius: TUNING.fireballBlastRadius * modFactor(TUNING, mc, 'BIG', 'blastRadius'), ...none };
     return { kind: S.mode === 'NEAR' ? 'firering' : 'fire', ...none };
   }
+  if (ew === 'WATER') return { kind: S.mode === 'SELF' ? 'wash' : S.mode === 'NEAR' ? 'waterring' : 'water', ...none };
   const world = {
     statics: LEVEL.statics,
     bodies: [...bodies].map(([id, v]) => {
       const d = BODY_DEF.get(id);
       return {
-        id, kind: d.kind, pos: v.p, half: d.size.map((x) => x / 2), mass: d.mass ?? 1,
-        traits: { movable: true, liftable: true, damageable: d.kind === 'dummy' },
-        immune: v.i > 0, heldBy: v.h || [], holding: S.latest?.p?.[id] ? holdingChain(id) : [],
+        id, kind: d.kind, pos: v.p, half: halfOf(id, v), mass: d.mass ?? 1,
+        traits: traitsOf(d.kind),
+        immune: v.i > 0, heldBy: v.h || [], holding: S.latest?.p?.[id] ? holdingChain(id) : [], empty: v.st === 0,
       };
     }),
   };
@@ -1028,8 +1099,8 @@ function buildPreview(bodies, rig) {
   let res;
   let radius = 0;
   const heavy = new Set();
-  if (ew === 'PUSH' || ew === 'PULL') {
-    const reach = modFactor(TUNING, mc, 'BIG', ew === 'PUSH' ? 'pushReach' : 'pullReach');
+  if (ew === 'PUSH' || ew === 'PULL' || ew === 'FIRE' || ew === 'STEAM') {
+    const reach = modFactor(TUNING, mc, 'BIG', { PUSH: 'pushReach', PULL: 'pullReach', FIRE: 'fireReach', STEAM: 'steamReach' }[ew]);
     radius = TUNING.nearbyRadius * reach;
     res = resolveTargets(S.mode, ew, world, S.me, aim, { range: TUNING.aimedMaxRange * reach, radius });
   } else {
@@ -1129,7 +1200,7 @@ function renderBag() {
   const ps = mySnap();
   if (!ps) return;
   const I = inv();
-  const sig = JSON.stringify([I.slots, I.mods, I.sel, I.cursor, S.hover, ps.mc, ps.e, drag?.targets]);
+  const sig = JSON.stringify([I.slots, I.mods, I.mix, I.sel, I.cursor, S.hover, ps.mc, ps.e, drag?.targets]);
   if (sig === S.bagKey) return;
   S.bagKey = sig;
   const hov = (area, i) => (S.hover && S.hover.area === area && S.hover.i === i ? ' hover' : '')
@@ -1147,6 +1218,14 @@ function renderBag() {
   const counts = {};
   for (const id of I.mods) counts[tokenWord(id)] = (counts[tokenWord(id)] || 0) + 1;
   $('mc-result').innerHTML = handWord ? spellHTML(handWord, counts, true) : `${icon('hand')}${icon('no')}`;
+  let mix = '';
+  for (let j = 0; j < MIX; j++) {
+    const id = I.mix[j];
+    mix += slotHTML('mix', j, id ? { word: tokenWord(id), tokens: [id] } : null, hov('mix', j));
+  }
+  $('mc-mixin').innerHTML = mix;
+  const react = I.mixReaction();
+  $('mc-mixout').outerHTML = `<div id="mc-mixout" class="mc-slot out${react ? ' ready' : ''}${hov('mixout', 0)}" data-area="mixout" data-i="0"${react ? ` data-word="${react.makes}"` : ''}>${react ? itemHTML(react.makes) : (I.mix.length ? icon('no') : '')}</div>`;
   let main = '';
   for (let i = HOTBAR; i < HOTBAR + MAIN; i++) main += slotHTML('inv', i, I.slots[i], hov('inv', i));
   $('mc-main').innerHTML = main;
@@ -1169,7 +1248,17 @@ function clickHit(hit, button, shift, now) {
   if (hit.area === 'inv') r = I.clickSlot(hit.i, button, shift, now);
   else if (hit.area === 'mod') r = I.clickMod(hit.i, button, shift, now);
   else if (hit.area === 'hand') r = I.clickHand(button, shift, now);
-  if (r === 'reject') {
+  else if (hit.area === 'mix') r = I.clickMix(hit.i, button, shift);
+  else if (hit.area === 'mixout') {
+    // 결과 칸: 반응이 맞으면 재료 단어들이 새 단어 하나가 된다(빈손일 때만, 마인크래프트처럼)
+    if (I.cursor) return 'reject';
+    if (!I.mixReaction()) { if (I.mix.length) toast(reasonHTML(REASON.BAD_MIX), 'info'); return false; }
+    send({ t: 'react', tokens: I.takeMix(now) });
+    S.did.mix = true;
+    return true;
+  }
+  if (r === 'reject' && (hit.area === 'mix' || hit.area === 'mixout')) toast(`${icon('mix')}${icon('no')}`, 'info');
+  else if (r === 'reject') {
     toast(hit.area === 'mod'
       ? `<span class="rs" data-r="MOD_ONLY">${icon('no')}${icon('hand')} ${icon('arrow')} ${W('BIG')}${W('STRONG')}</span>`
       : `<span class="rs" data-r="EFFECT_ONLY">${icon('no')}${W('BIG')} ${icon('arrow')} ${W('PUSH')}${W('PULL')}${W('LIFT')}${W('FIREBALL')}</span>`, 'info');
@@ -1340,6 +1429,9 @@ function updateHud(frame) {
   }
   else if (pv.kind === 'fire') { setNote(`${icon('fire')}${to}${icon('aim')}`, '', 'fire'); ch.className = 'fire'; }
   else if (pv.kind === 'firering') { setNote(`${icon('fire')}×4 ${icon('near')}`, '', 'firering'); ch.className = 'fire'; }
+  else if (pv.kind === 'water') { setNote(`${icon('water')}${to}${icon('aim')}`, '', 'water'); ch.className = 'fire'; }
+  else if (pv.kind === 'waterring') { setNote(`${icon('water')}×4 ${icon('near')}`, '', 'waterring'); ch.className = 'fire'; }
+  else if (pv.kind === 'wash') { setNote(`${icon('water')}${to}${icon('self')}${icon('slow')}${icon('no')}`, '', 'wash'); ch.className = 'fire'; }
   else if (pv.kind === 'blast') { setNote(`${icon('fire')}${icon('self')}${to}${icon('up')} · ${icon('near')}${icon('boom')}`, '', 'blast'); ch.className = 'fire'; }
   else if (pv.effect === 'PULL' && S.mode === 'AIM' && pv.res.selection.selected[0]?.type === 'static' && !pv.res.reason) {
     setNote(`${icon('wall')}${icon('pull')}${P(S.me)}`, 'ok', 'anchor');
@@ -1350,6 +1442,10 @@ function updateHud(frame) {
     const label = (id) => {
       const v = frame.bodies.get(id);
       if (pv.heavy.has(id)) return `${P(id)}${icon('weight')}${icon('people')}`;
+      // 세계의 성질: 당기면 뽑혀 나올 단어, 때리면 떨어질 단어를 미리 보여 준다
+      const tr = traitsOf(BODY_DEF.get(id)?.kind);
+      if (pv.effect === 'PULL' && tr.source) return `${P(id)}${icon('arrow')}${W(tr.source)}`;
+      if ((pv.effect === 'PUSH' || pv.effect === 'PULL') && tr.breakable) return `${P(id)}${icon('arrow')}${W('BIG')}`;
       if (v?.h?.length) return `${P(id)}${icon('people')}`;
       return P(id);
     };
@@ -1424,7 +1520,7 @@ function predictSelf(view, interpMe, dt) {
   // 내가 (직접·간접으로) 들어 올린 것. 무거워 못 들고 붙잡기만 한 것(hv)은 제자리에 있으니 부딪히는 물체로 둔다
   const held = new Set(holdingChain(S.me).filter((id) => !view.get(id)?.hv));
   const colliders = [];
-  for (const [id, v] of view) if (id !== S.me && !held.has(id)) colliders.push({ id, pos: v.p, half: BODY_DEF.get(id).size.map((x) => x / 2) });
+  for (const [id, v] of view) if (id !== S.me && !held.has(id)) colliders.push({ id, pos: v.p, half: halfOf(id, v) });
   predictor.rtt = S.rtt;
   const r = predictor.present(performance.now() / 1000, dt, {
     colliders,
@@ -1458,7 +1554,7 @@ function frame() {
     // 로비 배경: 천천히 도는 카메라
     const a = t * 0.1;
     renderer.render({
-      bodies: new Map(LEVEL.bodies.map((d) => [d.id, { p: [d.pos[0], d.pos[1] + d.size[1] / 2, d.pos[2]], y: 0, i: 0, d: 0, g: 1, speed: 0, hp: d.kind === 'dummy' ? TUNING.dummyHp : undefined }])),
+      bodies: new Map(LEVEL.bodies.map((d) => [d.id, { p: [d.pos[0], d.pos[1] + d.size[1] / 2, d.pos[2]], y: 0, i: 0, d: 0, g: 1, speed: 0, hp: d.kind === 'dummy' ? TUNING.dummyHp : undefined, st: 1, lit: d.kind === 'campfire' ? 1 : undefined }])),
       tokens: LEVEL.tokens.filter((x) => x.pos).map((x) => ({ id: x.id, w: x.word, p: x.pos })),
       me: null,
       camera: { pos: [Math.sin(a) * 26, 16, 16 + Math.cos(a) * 26], look: [0, 0, 16] },

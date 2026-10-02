@@ -73,3 +73,35 @@ test('두 번 클릭하면 같은 수식을 커서로 모두 모은다(수식 �
   J.clickSlot(0, 0, false, 0);
   assert.equal(J.collect(), false);
 });
+
+test('섞는 칸: 아무 단어나 한 칸에 하나, 순서와 상관없이 반응을 보여 주고, 닫으면 가방으로 돌아간다', () => {
+  const words = { w: 'WATER', f: 'FIRE', p: 'PUSH' };
+  const I = new Inventory(5);
+  I._word = (id) => words[id];
+  for (const id of ['w', 'f', 'p']) I.add(id, words[id]);
+  // 불을 먼저, 물을 나중에 넣어도 같은 반응
+  I.clickSlot(1, 0, false, 0);
+  assert.equal(I.clickMix(0, 0, false), true);
+  assert.equal(I.mixReaction(), null, '하나만으로는 반응 없음');
+  I.clickSlot(0, 0, false, 0);
+  I.clickMix(1, 0, false);
+  assert.equal(I.mixReaction()?.makes, 'STEAM');
+  assert.deepEqual(I.mix, ['f', 'w']);
+  // 하나 더 넣으면 종류·개수가 달라져 반응이 없다
+  I.clickSlot(2, 0, false, 0);
+  I.clickMix(2, 0, false);
+  assert.equal(I.mixReaction(), null);
+  // 닫으면 돌아온다
+  I.returnMix();
+  assert.equal(I.mix.length, 0);
+  assert.equal(I.slots.filter(Boolean).length, 3);
+  // 결과를 누르면 재료는 서버 반영 전까지 숨겨지고 칸에 다시 나타나지 않는다
+  for (const id of ['w', 'f']) {
+    I.clickSlot(I.slots.findIndex((x) => x?.tokens.includes(id)), 0, false, 0);
+    I.clickMix(I.mix.length, 0, false);
+  }
+  const ids = I.takeMix(0);
+  assert.deepEqual(ids, ['w', 'f']);
+  I.sync({ e: null, m: [], inv: ['w', 'f', 'p'] }, (id) => words[id], 0.1);
+  assert.ok(!I.slots.some((s) => s && (s.tokens.includes('w') || s.tokens.includes('f'))), '숨김');
+});

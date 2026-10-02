@@ -9,6 +9,11 @@ const P = {
   pull: '<path d="M20 12H8M12 6l-6 6 6 6"/><path d="M17 7h4M17 17h4"/>',
   lift: '<path d="M12 20V7M6 12l6-6 6 6"/><path d="M5 21h14"/>',
   fire: '<path d="M12 3c1 4 6 5 6 11a6 6 0 0 1-12 0c0-3 2-4 2-7 2 1 3 2 3 4 1-2 1-5 1-8z"/>',
+  water: '<path d="M12 3c3 4.5 6 8 6 11a6 6 0 0 1-12 0c0-3 3-6.5 6-11z"/><path d="M9 14a3 3 0 0 0 3 3"/>',
+  flame: '<path d="M12 21a6 6 0 0 0 6-6c0-4-3-6-3-10-2 2-3 3-3 5-1-1-2-2-2-4-2 2-4 5-4 9a6 6 0 0 0 6 6z"/><path d="M12 21a2.5 2.5 0 0 0 2.5-2.5c0-2-2.5-3.5-2.5-3.5s-2.5 1.5-2.5 3.5A2.5 2.5 0 0 0 12 21z"/>',
+  steam: '<path d="M8 20c-2-2 2-4 0-6s2-4 0-6M12 20c-2-2 2-4 0-6s2-4 0-6M16 20c-2-2 2-4 0-6s2-4 0-6"/>',
+  snow: '<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/><path d="M10 5l2 2 2-2M10 19l2-2 2 2"/>',
+  mix: '<path d="M5 9h14l-1.5 9a2 2 0 0 1-2 1.7h-7a2 2 0 0 1-2-1.7z"/><path d="M9 5l1 4M15 4l-1 5"/><circle cx="10" cy="14" r="1" fill="currentColor"/><circle cx="14" cy="15.5" r="1" fill="currentColor"/>',
   big: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   strong: '<path d="M13 2 5 13h6l-1 9 8-11h-6z"/>',
   hand: '<ellipse cx="12" cy="15" rx="5" ry="4.2"/><circle cx="6.5" cy="9" r="1.8"/><circle cx="10" cy="6.5" r="1.8"/><circle cx="14" cy="6.5" r="1.8"/><circle cx="17.5" cy="9" r="1.8"/>',
@@ -88,5 +93,5 @@ export function chip(id, color, cls = '') {
   return `<span class="pc ${esc(cls)}" style="--c:${esc(color)}">${esc(id)}</span>`;
 }
 
-export const EFFECT_ICON = { PUSH: 'push', PULL: 'pull', LIFT: 'lift', FIREBALL: 'fire', BIG: 'big', STRONG: 'strong' };
+export const EFFECT_ICON = { PUSH: 'push', PULL: 'pull', LIFT: 'lift', FIREBALL: 'fire', WATER: 'water', FIRE: 'flame', STEAM: 'steam', BIG: 'big', STRONG: 'strong' };
 export const MODE_ICON = { AIM: 'aim', SELF: 'self', NEAR: 'near' };
